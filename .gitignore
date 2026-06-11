@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# Virtual environment
+venv/
+env/
+.env
+.env.*
+!.env.example
+
+# Uploads
+ai-service/uploads/
+
+# Test/debug scripts
+ai-service/test_*.py
+ai-service/debug*.py
+ai-service/inspect*.py
+ai-service/dump_*.py
+ai-service/trace_*.py
+ai-service/check_*.py
+ai-service/*.txt
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db

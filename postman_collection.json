@@ -1,0 +1,61 @@
+{
+  "info": {
+    "_postman_id": "a988d400-ee76-4b61-9e2c-29a59cf83cf7",
+    "name": "Doctor Resume Parser Microservice",
+    "description": "API collection for testing the Doctor Resume Parser Microservice.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Health Check",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "http://localhost:8000/health",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "8000",
+          "path": [
+            "health"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Parse Resume",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "file",
+              "description": "Upload doctor's resume (PDF or DOCX)",
+              "type": "file",
+              "src": []
+            }
+          ]
+        },
+        "url": {
+          "raw": "http://localhost:8000/ai/parse-resume",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "8000",
+          "path": [
+            "ai",
+            "parse-resume"
+          ]
+        },
+        "description": "Upload a PDF or DOCX medical resume. The microservice extracts text and runs structured extraction via Gemini AI."
+      },
+      "response": []
+    }
+  ]
+}

@@ -1,0 +1,77 @@
+import os
+from fastapi import APIRouter, UploadFile, File, HTTPException, status
+from app.schemas.resume import ResumeParserResponseSchema
+from app.services.pdf_extractor import PDFExtractorService
+from app.services.resume_parser import ResumeParserService
+from app.utils.logger import get_logger
+
+logger = get_logger(__name__)
+
+router = APIRouter(prefix="/ai", tags=["Resume Parser"])
+resume_parser_service = ResumeParserService()
+
+# Directory configuration for uploaded files
+UPLOAD_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "uploads")
+
+@router.post(
+    "/parse-resume",
+    response_model=ResumeParserResponseSchema,
+    status_code=status.HTTP_200_OK,
+    summary="Parse a Doctor Resume",
+    description="Upload a doctor's resume in PDF format to extract structured, normalized profile information."
+)
+async def parse_resume(file: UploadFile = File(...)):
+    # 1. Validate file extension/type (PDF only)
+    filename = file.filename or ""
+    file_ext = os.path.splitext(filename)[1].lower()
+    
+    if file_ext != ".pdf" and file.content_type != "application/pdf":
+        logger.error(f"Rejected file with invalid format: filename='{filename}', content_type='{file.content_type}'")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Unsupported file format. Only PDF files are allowed."
+        )
+
+    saved_filepath = None
+    try:
+        # 2. Save the uploaded file
+        os.makedirs(UPLOAD_DIR, exist_ok=True)
+        import uuid
+        unique_filename = f"{uuid.uuid4()}{file_ext}"
+        saved_filepath = os.path.join(UPLOAD_DIR, unique_filename)
+        
+        logger.info(f"Saving uploaded PDF '{filename}' as '{unique_filename}'")
+        await file.seek(0)
+        contents = await file.read()
+        
+        if len(contents) == 0:
+            raise ValueError("The uploaded PDF file is empty.")
+            
+        with open(saved_filepath, "wb") as f:
+            f.write(contents)
+        
+        # 3. Call resume parser to parse the file
+        structured_data = resume_parser_service.parse_resume(saved_filepath)
+        
+        return structured_data
+
+    except ValueError as ve:
+        logger.error(f"Validation or parsing error: {str(ve)}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(ve)
+        )
+    except Exception as e:
+        logger.critical(f"System failure while parsing resume: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"An error occurred while processing the resume: {str(e)}"
+        )
+    finally:
+        # Optional: clean up the saved file to save space
+        if saved_filepath and os.path.exists(saved_filepath):
+            try:
+                os.remove(saved_filepath)
+                logger.info(f"Cleaned up temporary file: {saved_filepath}")
+            except Exception as e:
+                logger.warning(f"Failed to delete temporary file {saved_filepath}: {str(e)}")

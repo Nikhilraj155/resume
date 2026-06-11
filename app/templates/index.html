@@ -1,0 +1,855 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Doctor Profile Auto-Fill - AI Parser</title>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <style>
+        :root {
+            --bg-color: #0b0f19;
+            --card-bg: rgba(22, 28, 45, 0.4);
+            --card-border: rgba(255, 255, 255, 0.08);
+            --accent-color: #3b82f6;
+            --accent-gradient: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%);
+            --text-primary: #f3f4f6;
+            --text-secondary: #9ca3af;
+            --success-color: #10b981;
+            --danger-color: #ef4444;
+            --font-family: 'Plus Jakarta Sans', sans-serif;
+            --heading-font: 'Outfit', sans-serif;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            background-image: 
+                radial-gradient(at 0% 0%, rgba(59, 130, 246, 0.1) 0px, transparent 50%),
+                radial-gradient(at 100% 100%, rgba(139, 92, 246, 0.08) 0px, transparent 50%);
+            background-attachment: fixed;
+            font-family: var(--font-family);
+            color: var(--text-primary);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow-x: hidden;
+        }
+
+        header {
+            padding: 2rem 4rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid var(--card-border);
+            backdrop-filter: blur(12px);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .logo {
+            font-family: var(--heading-font);
+            font-weight: 700;
+            font-size: 1.5rem;
+            background: var(--accent-gradient);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .status-badge {
+            background: rgba(16, 185, 129, 0.1);
+            color: var(--success-color);
+            padding: 0.4rem 1rem;
+            border-radius: 9999px;
+            font-size: 0.85rem;
+            font-weight: 500;
+            border: 1px solid rgba(16, 185, 129, 0.2);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            background-color: var(--success-color);
+            border-radius: 50%;
+            display: inline-block;
+            box-shadow: 0 0 8px var(--success-color);
+        }
+
+        main {
+            flex: 1;
+            max-width: 1400px;
+            width: 100%;
+            margin: 0 auto;
+            padding: 3rem 2rem;
+            display: grid;
+            grid-template-columns: 1fr 2.2fr;
+            gap: 2.5rem;
+        }
+
+        @media (max-width: 1024px) {
+            main {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .upload-section {
+            display: flex;
+            flex-direction: column;
+            gap: 2rem;
+        }
+
+        .glass-card {
+            background: var(--card-bg);
+            border: 1px solid var(--card-border);
+            border-radius: 16px;
+            padding: 2rem;
+            backdrop-filter: blur(16px);
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
+            transition: transform 0.3s ease, border-color 0.3s ease;
+        }
+
+        .glass-card:hover {
+            border-color: rgba(255, 255, 255, 0.15);
+        }
+
+        h2 {
+            font-family: var(--heading-font);
+            font-weight: 600;
+            font-size: 1.5rem;
+            margin-bottom: 1.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .dropzone {
+            border: 2px dashed rgba(255, 255, 255, 0.15);
+            border-radius: 12px;
+            padding: 3rem 1rem;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 1rem;
+            background: rgba(255, 255, 255, 0.02);
+        }
+
+        .dropzone:hover, .dropzone.dragover {
+            border-color: var(--accent-color);
+            background: rgba(59, 130, 246, 0.05);
+        }
+
+        .upload-icon {
+            font-size: 3rem;
+            color: var(--accent-color);
+        }
+
+        .file-input {
+            display: none;
+        }
+
+        .loader-container {
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            gap: 1.5rem;
+            margin-top: 1.5rem;
+        }
+
+        .pulse-loader {
+            width: 48px;
+            height: 48px;
+            border: 4px solid var(--card-border);
+            border-top: 4px solid var(--accent-color);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .loading-step-log {
+            font-size: 0.9rem;
+            color: var(--text-secondary);
+            font-family: monospace;
+            text-align: center;
+            max-height: 100px;
+            overflow-y: auto;
+            width: 100%;
+            background: rgba(0, 0, 0, 0.2);
+            padding: 0.75rem;
+            border-radius: 8px;
+            border: 1px solid var(--card-border);
+        }
+
+        /* Forms / Form steps styles */
+        .preview-section {
+            display: flex;
+            flex-direction: column;
+            gap: 2rem;
+        }
+
+        /* Custom 4-Step Navigation Indicator */
+        .steps-indicator {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 2rem;
+            background: rgba(0,0,0,0.15);
+            padding: 1rem;
+            border-radius: 12px;
+            border: 1px solid var(--card-border);
+        }
+
+        .step-node {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            color: var(--text-secondary);
+            font-weight: 500;
+            font-size: 0.9rem;
+            cursor: pointer;
+            transition: color 0.3s;
+        }
+
+        .step-node.active {
+            color: var(--accent-color);
+            font-weight: 600;
+        }
+
+        .step-node.completed {
+            color: var(--success-color);
+        }
+
+        .step-num {
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            border: 2px solid currentColor;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.8rem;
+        }
+
+        .step-node.active .step-num {
+            background-color: var(--accent-color);
+            color: white;
+            border-color: var(--accent-color);
+        }
+
+        .step-node.completed .step-num {
+            background-color: var(--success-color);
+            color: white;
+            border-color: var(--success-color);
+        }
+
+        .form-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1.2rem;
+        }
+
+        @media (max-width: 640px) {
+            .form-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 0.4rem;
+        }
+
+        .form-group.full-width {
+            grid-column: span 2;
+        }
+
+        @media (max-width: 640px) {
+            .form-group.full-width {
+                grid-column: span 1;
+            }
+        }
+
+        label {
+            font-size: 0.85rem;
+            font-weight: 500;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        input, select, textarea {
+            background: rgba(0, 0, 0, 0.25);
+            border: 1px solid var(--card-border);
+            border-radius: 8px;
+            padding: 0.75rem 1rem;
+            color: var(--text-primary);
+            font-family: var(--font-family);
+            font-size: 0.95rem;
+            transition: border-color 0.3s;
+            width: 100%;
+        }
+
+        input:focus, select:focus, textarea:focus {
+            outline: none;
+            border-color: var(--accent-color);
+        }
+
+        .wizard-buttons {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 2rem;
+            border-top: 1px solid var(--card-border);
+            padding-top: 1.5rem;
+        }
+
+        .btn {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid var(--card-border);
+            color: var(--text-primary);
+            padding: 0.75rem 1.5rem;
+            border-radius: 8px;
+            font-family: var(--font-family);
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .btn:hover {
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .btn-primary {
+            background: var(--accent-gradient);
+            border: none;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            box-shadow: 0 0 16px rgba(59, 130, 246, 0.4);
+            transform: translateY(-1px);
+        }
+
+        .btn-primary:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
+        .step-content {
+            display: none;
+        }
+
+        .step-content.active {
+            display: block;
+            animation: fadeIn 0.4s ease-out;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(8px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .tag-container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            padding: 0.5rem;
+            background: rgba(0, 0, 0, 0.15);
+            border-radius: 8px;
+            border: 1px solid var(--card-border);
+            min-height: 46px;
+            align-items: center;
+        }
+
+        .tag {
+            background: rgba(59, 130, 246, 0.15);
+            border: 1px solid rgba(59, 130, 246, 0.3);
+            color: var(--accent-color);
+            padding: 0.25rem 0.75rem;
+            border-radius: 6px;
+            font-size: 0.85rem;
+            font-weight: 500;
+        }
+
+        .edu-item-card {
+            background: rgba(255,255,255,0.02);
+            border: 1px solid var(--card-border);
+            padding: 1rem;
+            border-radius: 8px;
+            margin-bottom: 1rem;
+        }
+
+        .json-preview {
+            background: rgba(0,0,0,0.4);
+            border: 1px solid var(--card-border);
+            border-radius: 8px;
+            padding: 1rem;
+            font-family: monospace;
+            font-size: 0.85rem;
+            color: #818cf8;
+            max-height: 400px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+        }
+
+        .alert-error {
+            background: rgba(239, 68, 68, 0.1);
+            color: var(--danger-color);
+            border: 1px solid rgba(239, 68, 68, 0.2);
+            padding: 1rem;
+            border-radius: 8px;
+            margin-top: 1rem;
+            font-size: 0.9rem;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+
+    <header>
+        <div class="logo">
+            <span>⚕️</span> DoctorRecruit AI Parser
+        </div>
+        <div class="status-badge">
+            <span class="status-dot"></span> Service Live
+        </div>
+    </header>
+
+    <main>
+        <!-- Left Column: Upload -->
+        <div class="upload-section">
+            <div class="glass-card">
+                <h2><span>📂</span> Upload Resume</h2>
+                <p style="color: var(--text-secondary); margin-bottom: 1.5rem; font-size: 0.9rem;">
+                    Upload a doctor's resume in PDF or DOCX format. Scanned documents will automatically activate OCR processing.
+                </p>
+
+                <div class="dropzone" id="dropzone">
+                    <span class="upload-icon">📄</span>
+                    <p style="font-weight: 500;">Drag & drop file here</p>
+                    <p style="font-size: 0.8rem; color: var(--text-secondary);">or click to select file</p>
+                    <input type="file" id="fileInput" class="file-input" accept=".pdf,.docx,.doc">
+                </div>
+
+                <div class="alert-error" id="errorBox"></div>
+
+                <!-- Loader -->
+                <div class="loader-container" id="loaderContainer">
+                    <div class="pulse-loader"></div>
+                    <div class="loading-step-log" id="loadingLog">Ready to upload...</div>
+                </div>
+            </div>
+
+            <!-- Side Card for Raw/JSON viewer -->
+            <div class="glass-card">
+                <h2><span>⚡</span> Raw Parsed JSON</h2>
+                <div class="json-preview" id="jsonPreview">Upload a document to parse structured output...</div>
+            </div>
+        </div>
+
+        <!-- Right Column: 4-Step Form -->
+        <div class="preview-section">
+            <div class="glass-card" style="height: 100%;">
+                <!-- Wizard Navigation -->
+                <div class="steps-indicator">
+                    <div class="step-node active" data-step="1">
+                        <span class="step-num">1</span>
+                        <span>Personal Info</span>
+                    </div>
+                    <div class="step-node" data-step="2">
+                        <span class="step-num">2</span>
+                        <span>Education</span>
+                    </div>
+                    <div class="step-node" data-step="3">
+                        <span class="step-num">3</span>
+                        <span>Experience</span>
+                    </div>
+                    <div class="step-node" data-step="4">
+                        <span class="step-num">4</span>
+                        <span>Review & Finish</span>
+                    </div>
+                </div>
+
+                <!-- Wizard Steps -->
+                <form id="wizardForm" onsubmit="event.preventDefault();">
+                    
+                    <!-- STEP 1: Personal Info -->
+                    <div class="step-content active" id="step1">
+                        <h3 style="margin-bottom: 1.5rem; font-family: var(--heading-font);">Step 1: Personal Information</h3>
+                        <div class="form-grid">
+                            <div class="form-group">
+                                <label for="first_name">First Name</label>
+                                <input type="text" id="first_name" placeholder="John">
+                            </div>
+                            <div class="form-group">
+                                <label for="last_name">Last Name</label>
+                                <input type="text" id="last_name" placeholder="Doe">
+                            </div>
+                            <div class="form-group">
+                                <label for="email">Email</label>
+                                <input type="email" id="email" placeholder="example@hospital.com">
+                            </div>
+                            <div class="form-group">
+                                <label for="phone">Phone</label>
+                                <input type="text" id="phone" placeholder="+1-234-567-890">
+                            </div>
+                            <div class="form-group">
+                                <label for="gender">Gender</label>
+                                <input type="text" id="gender" placeholder="Male / Female / Other">
+                            </div>
+                            <div class="form-group">
+                                <label for="date_of_birth">Date of Birth</label>
+                                <input type="text" id="date_of_birth" placeholder="YYYY-MM-DD">
+                            </div>
+                            <div class="form-group">
+                                <label for="city">City</label>
+                                <input type="text" id="city" placeholder="Boston">
+                            </div>
+                            <div class="form-group">
+                                <label for="state">State</label>
+                                <input type="text" id="state" placeholder="Massachusetts">
+                            </div>
+                            <div class="form-group">
+                                <label for="country">Country</label>
+                                <input type="text" id="country" placeholder="United States">
+                            </div>
+                            <div class="form-group">
+                                <label for="headline">Professional Headline</label>
+                                <input type="text" id="headline" placeholder="Consultant Cardiologist">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- STEP 2: Education -->
+                    <div class="step-content" id="step2">
+                        <h3 style="margin-bottom: 1.5rem; font-family: var(--heading-font);">Step 2: Education & Medical Degrees</h3>
+                        <div id="educationContainer">
+                            <p style="color: var(--text-secondary);">No education records extracted yet.</p>
+                        </div>
+                    </div>
+
+                    <!-- STEP 3: Experience & Skills -->
+                    <div class="step-content" id="step3">
+                        <h3 style="margin-bottom: 1.5rem; font-family: var(--heading-font);">Step 3: Clinical Experience & Skills</h3>
+                        <div class="form-grid" style="margin-bottom: 1.5rem;">
+                            <div class="form-group">
+                                <label for="exp_spec">Medical Specialization</label>
+                                <input type="text" id="exp_spec" placeholder="Cardiology / General Surgery">
+                            </div>
+                            <div class="form-group">
+                                <label for="exp_years">Total Experience (Years)</label>
+                                <input type="number" step="0.1" id="exp_years" placeholder="0">
+                            </div>
+                            <div class="form-group">
+                                <label for="current_designation">Current Designation</label>
+                                <input type="text" id="current_designation" placeholder="Resident Medical Officer">
+                            </div>
+                            <div class="form-group">
+                                <label for="current_hospital">Current Hospital</label>
+                                <input type="text" id="current_hospital" placeholder="City General Hospital">
+                            </div>
+                            <div class="form-group full-width">
+                                <label for="reg_number">Medical Council Registration Number</label>
+                                <input type="text" id="reg_number" placeholder="MC-12345-A">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label>Extracted Skills</label>
+                            <div class="tag-container" id="skillsTags">
+                                <span style="color: var(--text-secondary); font-size: 0.9rem;">No skills extracted yet.</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- STEP 4: Languages & Review -->
+                    <div class="step-content" id="step4">
+                        <h3 style="margin-bottom: 1.5rem; font-family: var(--heading-font);">Step 4: Languages & Certifications</h3>
+                        <div class="form-group" style="margin-bottom: 1.5rem;">
+                            <label>Certifications</label>
+                            <div class="tag-container" id="certificationsTags">
+                                <span style="color: var(--text-secondary); font-size: 0.9rem;">No certifications extracted yet.</span>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label>Spoken Languages</label>
+                            <div class="tag-container" id="languagesTags">
+                                <span style="color: var(--text-secondary); font-size: 0.9rem;">No languages extracted yet.</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Navigation buttons -->
+                    <div class="wizard-buttons">
+                        <button type="button" class="btn" id="prevBtn" disabled>Back</button>
+                        <button type="button" class="btn btn-primary" id="nextBtn">Next</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        // Form Wizard State Management
+        let currentStep = 1;
+        const totalSteps = 4;
+
+        const stepNodes = document.querySelectorAll('.step-node');
+        const stepContents = document.querySelectorAll('.step-content');
+        const prevBtn = document.getElementById('prevBtn');
+        const nextBtn = document.getElementById('nextBtn');
+
+        function updateWizard() {
+            // Update active nodes
+            stepNodes.forEach((node, idx) => {
+                const stepNum = idx + 1;
+                node.classList.remove('active', 'completed');
+                if (stepNum === currentStep) {
+                    node.classList.add('active');
+                } else if (stepNum < currentStep) {
+                    node.classList.add('completed');
+                }
+            });
+
+            // Update step views
+            stepContents.forEach((content, idx) => {
+                content.classList.remove('active');
+                if (idx + 1 === currentStep) {
+                    content.classList.add('active');
+                }
+            });
+
+            // Toggle buttons
+            prevBtn.disabled = currentStep === 1;
+            if (currentStep === totalSteps) {
+                nextBtn.textContent = 'Finish';
+            } else {
+                nextBtn.textContent = 'Next';
+            }
+        }
+
+        prevBtn.addEventListener('click', () => {
+            if (currentStep > 1) {
+                currentStep--;
+                updateWizard();
+            }
+        });
+
+        nextBtn.addEventListener('click', () => {
+            if (currentStep < totalSteps) {
+                currentStep++;
+                updateWizard();
+            } else {
+                alert('Doctor Profile Ready for submission!');
+            }
+        });
+
+        // Click nodes to jump
+        stepNodes.forEach(node => {
+            node.addEventListener('click', () => {
+                const step = parseInt(node.getAttribute('data-step'));
+                currentStep = step;
+                updateWizard();
+            });
+        });
+
+        // Uploader & Drag and Drop Action
+        const dropzone = document.getElementById('dropzone');
+        const fileInput = document.getElementById('fileInput');
+        const loaderContainer = document.getElementById('loaderContainer');
+        const loadingLog = document.getElementById('loadingLog');
+        const errorBox = document.getElementById('errorBox');
+        const jsonPreview = document.getElementById('jsonPreview');
+
+        dropzone.addEventListener('click', () => fileInput.click());
+
+        dropzone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropzone.classList.add('dragover');
+        });
+
+        dropzone.addEventListener('dragleave', () => {
+            dropzone.classList.remove('dragover');
+        });
+
+        dropzone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropzone.classList.remove('dragover');
+            if (e.dataTransfer.files.length > 0) {
+                handleFileUpload(e.dataTransfer.files[0]);
+            }
+        });
+
+        fileInput.addEventListener('change', () => {
+            if (fileInput.files.length > 0) {
+                handleFileUpload(fileInput.files[0]);
+            }
+        });
+
+        function logStatus(message) {
+            loadingLog.innerHTML = `<span style="color: var(--accent-color);">></span> ${message}`;
+        }
+
+        async function handleFileUpload(file) {
+            errorBox.style.display = 'none';
+            loaderContainer.style.display = 'flex';
+            logStatus('Uploading and saving resume...');
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            try {
+                logStatus('Extracting text (OCR check)...');
+                const response = await fetch('/ai/parse-resume', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (!response.ok) {
+                    const err = await response.json();
+                    throw new Error(err.detail || 'Failed to parse resume');
+                }
+
+                logStatus('Extracting structured profile information...');
+                const data = await response.json();
+                
+                logStatus('Extraction complete! Auto-filling profile form...');
+                fillForm(data);
+                
+                // Show JSON
+                jsonPreview.textContent = JSON.stringify(data, null, 2);
+                
+                setTimeout(() => {
+                    loaderContainer.style.display = 'none';
+                    // Jump to first step
+                    currentStep = 1;
+                    updateWizard();
+                }, 1000);
+
+            } catch (err) {
+                console.error(err);
+                loaderContainer.style.display = 'none';
+                errorBox.textContent = err.message || 'An error occurred during parsing.';
+                errorBox.style.display = 'block';
+            }
+        }
+
+        function fillForm(data) {
+            // Step 1: Personal Info
+            const pi = data.personal_info || {};
+            document.getElementById('first_name').value = pi.first_name || '';
+            document.getElementById('last_name').value = pi.last_name || '';
+            document.getElementById('email').value = pi.email || '';
+            document.getElementById('phone').value = pi.phone || '';
+            document.getElementById('gender').value = pi.gender || '';
+            document.getElementById('date_of_birth').value = pi.date_of_birth || '';
+            document.getElementById('city').value = pi.city || '';
+            document.getElementById('state').value = pi.state || '';
+            document.getElementById('country').value = pi.country || '';
+            document.getElementById('headline').value = pi.professional_headline || '';
+
+            // Step 2: Education
+            const eduContainer = document.getElementById('educationContainer');
+            eduContainer.innerHTML = '';
+            if (data.education && data.education.length > 0) {
+                data.education.forEach(edu => {
+                    const card = document.createElement('div');
+                    card.className = 'edu-item-card';
+                    card.innerHTML = `
+                        <div style="display: flex; justify-content: space-between; align-items: start;">
+                            <div>
+                                <h4 style="color: var(--accent-color); font-size: 1.1rem; font-weight:600;">${edu.degree || 'Degree Unknown'}</h4>
+                                <p style="font-size: 0.95rem; font-weight: 500;">Specialization: ${edu.specialization || 'N/A'}</p>
+                                <p style="font-size: 0.85rem; color: var(--text-secondary);">${edu.college || 'College/University Unknown'}</p>
+                            </div>
+                            <span style="font-size: 0.85rem; color: var(--accent-color); font-weight: 500;">
+                                ${edu.start_year || '?'} - ${edu.end_year || '?'}
+                            </span>
+                        </div>
+                    `;
+                    eduContainer.appendChild(card);
+                });
+            } else {
+                eduContainer.innerHTML = '<p style="color: var(--text-secondary);">No education records found.</p>';
+            }
+
+            // Step 3: Experience & Skills
+            const exp = data.experience || {};
+            document.getElementById('exp_spec').value = exp.specialization || '';
+            document.getElementById('exp_years').value = exp.experience_years || '';
+            document.getElementById('current_designation').value = exp.current_designation || '';
+            document.getElementById('current_hospital').value = exp.current_hospital || '';
+            document.getElementById('reg_number').value = exp.medical_registration_number || '';
+
+            const skillsTags = document.getElementById('skillsTags');
+            skillsTags.innerHTML = '';
+            if (data.skills && data.skills.length > 0) {
+                data.skills.forEach(skill => {
+                    const span = document.createElement('span');
+                    span.className = 'tag';
+                    span.textContent = skill;
+                    skillsTags.appendChild(span);
+                });
+            } else {
+                skillsTags.innerHTML = '<span style="color: var(--text-secondary); font-size: 0.9rem;">No skills found.</span>';
+            }
+
+            // Step 4: Certifications & Languages
+            const certsTags = document.getElementById('certificationsTags');
+            certsTags.innerHTML = '';
+            if (data.certifications && data.certifications.length > 0) {
+                data.certifications.forEach(cert => {
+                    const span = document.createElement('span');
+                    span.className = 'tag';
+                    span.textContent = cert;
+                    certsTags.appendChild(span);
+                });
+            } else {
+                certsTags.innerHTML = '<span style="color: var(--text-secondary); font-size: 0.9rem;">No certifications found.</span>';
+            }
+
+            const langsTags = document.getElementById('languagesTags');
+            langsTags.innerHTML = '';
+            if (data.languages && data.languages.length > 0) {
+                data.languages.forEach(lang => {
+                    const span = document.createElement('span');
+                    span.className = 'tag';
+                    span.style.background = 'rgba(139, 92, 246, 0.15)';
+                    span.style.color = '#a78bfa';
+                    span.style.borderColor = 'rgba(139, 92, 246, 0.3)';
+                    span.textContent = lang;
+                    langsTags.appendChild(span);
+                });
+            } else {
+                langsTags.innerHTML = '<span style="color: var(--text-secondary); font-size: 0.9rem;">No languages found.</span>';
+            }
+        }
+    </script>
+</body>
+</html>
