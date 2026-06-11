@@ -173,13 +173,17 @@ class ResumeParserService:
 
     def parse_resume(self, filepath: str) -> ResumeParserResponseSchema:
         """
-        Parses a medical resume from a PDF file using open-source tools
-        (PyMuPDF, spaCy, and Regex) and structured heuristics.
+        Parses a medical resume from a PDF or DOCX file using open-source tools
+        (PyMuPDF, python-docx, spaCy, and Regex) and structured heuristics.
         """
         logger.info(f"Starting open-source parse execution for: {filepath}")
         
         # 1. Extract Text
-        text = PDFExtractorService.extract_text(filepath)
+        ext = os.path.splitext(filepath)[1].lower()
+        if ext == '.docx':
+            text = PDFExtractorService.extract_text_from_docx(filepath)
+        else:
+            text = PDFExtractorService.extract_text(filepath)
         normalized_text = " ".join(text.split())
         lines = [line.strip() for line in text.split("\n") if line.strip()]
         

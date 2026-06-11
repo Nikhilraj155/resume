@@ -18,18 +18,20 @@ UPLOAD_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.pat
     response_model=ResumeParserResponseSchema,
     status_code=status.HTTP_200_OK,
     summary="Parse a Doctor Resume",
-    description="Upload a doctor's resume in PDF format to extract structured, normalized profile information."
+    description="Upload a doctor's resume in PDF and DOCX format to extract structured, normalized profile information."
 )
 async def parse_resume(file: UploadFile = File(...)):
-    # 1. Validate file extension/type (PDF only)
+    # 1. Validate file extension/type (PDF and DOCX supported)
     filename = file.filename or ""
     file_ext = os.path.splitext(filename)[1].lower()
+    allowed_exts = {".pdf", ".docx"}
+    allowed_types = {"application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"}
     
-    if file_ext != ".pdf" and file.content_type != "application/pdf":
+    if file_ext not in allowed_exts and file.content_type not in allowed_types:
         logger.error(f"Rejected file with invalid format: filename='{filename}', content_type='{file.content_type}'")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Unsupported file format. Only PDF files are allowed."
+            detail="Unsupported file format. Only PDF and DOCX files are allowed."
         )
 
     saved_filepath = None
@@ -40,7 +42,7 @@ async def parse_resume(file: UploadFile = File(...)):
         unique_filename = f"{uuid.uuid4()}{file_ext}"
         saved_filepath = os.path.join(UPLOAD_DIR, unique_filename)
         
-        logger.info(f"Saving uploaded PDF '{filename}' as '{unique_filename}'")
+        logger.info(f"Saving uploaded file '{filename}' as '{unique_filename}'")
         await file.seek(0)
         contents = await file.read()
         

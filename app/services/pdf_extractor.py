@@ -194,6 +194,95 @@ def _words_extract(page: fitz.Page) -> str:
 
 class PDFExtractorService:
     @staticmethod
+    def extract_text_from_docx(filepath: str) -> str:
+        """
+        Extracts text from a .docx file, normalizing output to match PDF extractor format:
+        - Tables reconstructed row-by-row (tab-separated cells)
+        - Tab-separated designation lines preserved as-is
+        - List Paragraph / bullet text prefixed with '- '
+        - Section headers emitted as-is
+        """
+        if not os.path.exists(filepath):
+            raise ValueError(f"File not found at: {filepath}")
+
+        import docx
+        from docx.oxml.ns import qn
+
+        doc = docx.Document(filepath)
+        body = doc.element.body
+        lines = []
+        in_bullet_block = False
+        EMPLOYER_KEYWORDS = ['hospital', 'clinic', 'medical', 'centre', 'center',
+                             'college', 'institute', 'foundation', 'healthcare']
+
+        for child in body.iterchildren():
+            tag = child.tag.split('}')[-1] if '}' in child.tag else child.tag
+
+            if tag == 'p':
+                p_text = ''.join(run.text for run in child.iter(qn('w:t')))
+                if not p_text.strip():
+                    continue
+
+                style_val = ''
+                style_el = child.find('.//' + qn('w:pStyle'))
+                if style_el is not None:
+                    style_val = style_el.get(qn('w:val'), '').lower()
+
+                is_heading = 'heading' in style_val
+                is_list = 'listparagraph' in style_val or 'listbullet' in style_val
+                text = p_text.replace('\t', '  ')
+
+                if is_heading:
+                    in_bullet_block = False
+                    lines.append(text.strip())
+                elif is_list:
+                    in_bullet_block = True
+                    lines.append('- ' + text.strip())
+                else:
+                    if '\t' in p_text:
+                        in_bullet_block = False
+                        tab_parts = p_text.split('\t', 1)
+                        designation = tab_parts[0].strip()
+                        date_and_rest = tab_parts[1].strip()
+                        date_match = re.match(
+                            r'((?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|\d{4})\S*\s*-\s*'
+                            r'(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|\d{4}|present|current))',
+                            date_and_rest, re.IGNORECASE
+                        )
+                        date_part = date_match.group(1).strip() if date_match else date_and_rest.split(' - ')[0].strip()
+                        lines.append(f'{designation}  {date_part}')
+                        in_bullet_block = True
+                    elif in_bullet_block:
+                        is_employer = (
+                            len(text.strip()) < 80
+                            and text.strip()[0].isupper()
+                            and any(kw in text.lower() for kw in EMPLOYER_KEYWORDS)
+                            and not text.strip().startswith(('-', '•'))
+                        )
+                        if is_employer:
+                            in_bullet_block = False
+                            lines.append(text.strip())
+                        else:
+                            lines.append('- ' + text.strip())
+                    else:
+                        lines.append(text.strip())
+
+            elif tag == 'tbl':
+                in_bullet_block = False
+                for row in child.iter(qn('w:tr')):
+                    cells = []
+                    for cell in row.iter(qn('w:tc')):
+                        cell_text = ''.join(t.text for t in cell.iter(qn('w:t'))).strip()
+                        if cell_text:
+                            cells.append(cell_text)
+                    if cells:
+                        lines.append('  '.join(cells))
+
+        if not lines:
+            raise ValueError("The DOCX file contains no extractable text.")
+        return '\n'.join(lines)
+
+    @staticmethod
     def extract_text(filepath: str) -> str:
         """
         Extracts text from a PDF. Uses PyMuPDF get_text() first; falls back to
