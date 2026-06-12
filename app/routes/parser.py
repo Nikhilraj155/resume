@@ -1,8 +1,9 @@
 import os
-from fastapi import APIRouter, UploadFile, File, HTTPException, status
+from fastapi import APIRouter, UploadFile, File, HTTPException, status, BackgroundTasks
 from app.schemas.resume import ResumeParserResponseSchema
 from app.services.pdf_extractor import PDFExtractorService
 from app.services.resume_parser import ResumeParserService
+from app.services.resume_storage import save_resume
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -20,7 +21,7 @@ UPLOAD_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.pat
     summary="Parse a Doctor Resume",
     description="Upload a doctor's resume in PDF and DOCX format to extract structured, normalized profile information."
 )
-async def parse_resume(file: UploadFile = File(...)):
+async def parse_resume(file: UploadFile = File(...), background_tasks: BackgroundTasks = BackgroundTasks()):
     # 1. Validate file extension/type (PDF and DOCX supported)
     filename = file.filename or ""
     file_ext = os.path.splitext(filename)[1].lower()
@@ -54,6 +55,9 @@ async def parse_resume(file: UploadFile = File(...)):
         
         # 3. Call resume parser to parse the file
         structured_data = resume_parser_service.parse_resume(saved_filepath)
+        
+        # 4. Schedule DB save in background (non-blocking)
+        background_tasks.add_task(save_resume, filename, structured_data)
         
         return structured_data
 

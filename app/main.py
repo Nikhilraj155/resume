@@ -12,6 +12,7 @@ load_dotenv()
 
 from app.routes import parser
 from app.utils.logger import get_logger
+from app.database import init_db
 
 logger = get_logger(__name__)
 
@@ -39,6 +40,16 @@ templates = Jinja2Templates(directory=os.path.join(CURRENT_DIR, "templates"))
 
 # Include Routers
 app.include_router(parser.router)
+
+
+@app.on_event("startup")
+async def on_startup():
+    logger.info("Initializing database tables...")
+    try:
+        init_db()
+        logger.info("Database tables created successfully.")
+    except Exception as e:
+        logger.warning(f"Database initialization failed (non-fatal): {e}")
 
 # Root Endpoint: Serves HTML Testing Frontend
 @app.get("/", response_class=HTMLResponse, tags=["UI"])

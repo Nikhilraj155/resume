@@ -12,6 +12,7 @@ A production-ready AI-powered resume parsing microservice built with **FastAPI**
   * PyMuPDF (for PDFs)
   * python-docx (for Word documents)
 * **Server**: Uvicorn
+* **Database**: PostgreSQL (via Neon) with SQLAlchemy
 
 ---
 
@@ -20,21 +21,29 @@ A production-ready AI-powered resume parsing microservice built with **FastAPI**
 ai-service/
 ├── app/
 │   ├── main.py              # Application bootstrap & handlers
+│   ├── database.py          # SQLAlchemy engine, session & table initialization
+│   ├── models.py            # ORM models for PostgreSQL (Neon)
 │   ├── routes/              # Route controllers
 │   │   └── parser.py        # /ai/parse-resume endpoint
 │   ├── services/            # Business logic / AI integration
-│   │   ├── extractor.py     # PyMuPDF & python-docx extractor
-│   │   └── gemini.py        # Gemini client & structured output config
+│   │   ├── pdf_extractor.py          # PyMuPDF & python-docx text extractor
+│   │   ├── resume_parser.py          # Core parsing with spaCy & regex
+│   │   ├── resume_storage.py         # Persists parsed resumes to PostgreSQL
+│   │   ├── spacy_parser.py           # spaCy NER & name extraction
+│   │   ├── medical_skill_extractor.py
+│   │   └── experience_calculator.py
 │   ├── schemas/             # Pydantic schemas for data integrity
 │   │   └── resume.py
 │   ├── prompts/             # System instructions & templates
 │   │   └── resume_prompt.py
+│   ├── templates/
+│   │   └── index.html       # Testing frontend
 │   └── utils/
 │       └── logger.py        # Custom formatted console logger
+├── tests/                   # Unit tests
 ├── uploads/                 # Temporary directory for uploaded resumes (UUID named)
 ├── requirements.txt         # Package dependencies
-├── .env.example             # Configuration variables example
-├── .env                     # Local environment settings
+├── .env                     # Environment variables (incl. DATABASE_URL)
 └── postman_collection.json  # Importable Postman workspace
 ```
 
@@ -64,7 +73,7 @@ pip install -r requirements.txt
 ```
 
 ### 4. Setup Environment Variables
-Copy `.env.example` to `.env` and configure your **Google Gemini API Key**:
+Copy `.env.example` to `.env` and configure the required variables:
 ```bash
 copy .env.example .env
 ```
@@ -73,7 +82,10 @@ Open `.env` and edit:
 PORT=8000
 LOG_LEVEL=INFO
 GEMINI_API_KEY=AIzaSyYourActualAPIKeyHere
+DATABASE_URL=postgresql://user:password@host:port/dbname?sslmode=require
 ```
+
+> **Database**: Parsed resumes are stored in PostgreSQL (Neon). Use a pooled connection URL (with `-pooler` in the hostname) for runtime queries. Table creation is handled automatically on startup via a direct connection.
 
 ### 5. Launch the Service
 ```bash
@@ -182,3 +194,22 @@ The application maps specific error codes for seamless client error resolution:
 * **`400 Bad Request`**: File is corrupted, empty, or uses an unsupported file extension.
 * **`422 Unprocessable Entity`**: Request format/multipart parameters are wrong.
 * **`500 Internal Server Error`**: Gemini API failure, network down, or unhandled exceptions.
+
+## Database
+
+Parsed resume data is automatically persisted to a **PostgreSQL** database (Neon) using SQLAlchemy ORM. Storage runs as a background task so it does not affect response time.
+
+### Tables
+
+| Table | Description |
+|-------|-------------|
+| `parsed_resumes` | Root record per uploaded file |
+| `personal_info` | Doctor's name, contact, location |
+| `education` | Degrees, colleges, years |
+| `experience` | Specialization, years, current role |
+| `work_history` | Individual job entries (FK → experience) |
+| `resume_skills` | Extracted medical skills |
+| `resume_certifications` | Certifications found in resume |
+| `resume_languages` | Languages spoken |
+
+> Database tables are created automatically on first startup. No manual migration steps needed.
