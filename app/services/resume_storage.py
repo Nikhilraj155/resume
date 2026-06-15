@@ -6,6 +6,9 @@ from app.models import (
 )
 from app.schemas.resume import ResumeParserResponseSchema
 from app.utils.logger import get_logger
+from sqlalchemy import update
+from app.models import ParsedResume
+from app.services.embedding_service import embedding_service
 
 logger = get_logger(__name__)
 
@@ -77,6 +80,55 @@ def save_resume(filename: str, data: ResumeParserResponseSchema) -> None:
 
             db.commit()
             logger.info(f"Saved parsed resume {resume.id} for file: {filename}")
+
+            # Generate embedding
+            try:
+                parts = []
+                exp = data.experience
+                if exp.specialization:
+                    parts.append(exp.specialization)
+                if exp.current_designation:
+                    parts.append(exp.current_designation)
+                if exp.current_hospital:
+                    parts.append(exp.current_hospital)
+                if exp.experience_years is not None:
+                    parts.append(f"{exp.experience_years} years")
+                for wh in exp.work_history:
+                    if wh.designation:
+                        parts.append(wh.designation)
+                    if wh.employer:
+                        parts.append(wh.employer)
+                for edu in data.education:
+                    if edu.degree:
+                        parts.append(edu.degree)
+                    if edu.specialization:
+                        parts.append(edu.specialization)
+                    if edu.college:
+                        parts.append(edu.college)
+                for skill in data.skills:
+                    parts.append(skill)
+                for cert in data.certifications:
+                    parts.append(cert)
+                for lang in data.languages:
+                    parts.append(lang)
+                pi = data.personal_info
+                if pi:
+                    if pi.city:
+                        parts.append(pi.city)
+                    if pi.state:
+                        parts.append(pi.state)
+
+                embedding_text = " ".join(parts)
+                embedding_vec = embedding_service.encode(embedding_text)
+                if embedding_vec is not None:
+                    stmt = update(ParsedResume).where(ParsedResume.id == resume.id).values(embedding=embedding_vec)
+                    db.execute(stmt)
+                    db.commit()
+                    logger.debug(f"Embedding stored for resume {resume.id}")
+                else:
+                    logger.warning(f"Embedding skipped for resume {resume.id} (encode returned None)")
+            except Exception as e:
+                logger.warning(f"Embedding generation failed for resume {resume.id} (non-fatal): {e}")
         except Exception:
             db.rollback()
             raise

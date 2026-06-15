@@ -1,5 +1,5 @@
 import os
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker, declarative_base
 
 DATABASE_URL = os.getenv("DATABASE_URL")
@@ -28,6 +28,9 @@ def init_db():
     """Create all tables using a direct (non-pooled) connection."""
     direct_engine = create_engine(_direct_url())
     try:
+        with direct_engine.connect() as conn:
+            conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+            conn.commit()
         Base.metadata.create_all(bind=direct_engine)
     finally:
         direct_engine.dispose()

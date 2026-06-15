@@ -1,4 +1,5 @@
 import uuid
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import Column, String, Float, ForeignKey, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
@@ -11,6 +12,7 @@ class ParsedResume(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     filename = Column(String(255), nullable=False)
     created_at = Column(Text, nullable=False)
+    embedding = Column(Vector(384), nullable=True)
 
     personal_info = relationship("PersonalInfo", uselist=False, back_populates="resume", cascade="all, delete-orphan")
     education = relationship("Education", back_populates="resume", cascade="all, delete-orphan")
