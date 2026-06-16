@@ -1,6 +1,7 @@
 import os
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker, declarative_base
+from app.utils.logger import get_logger
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
@@ -24,6 +25,23 @@ def _direct_url() -> str:
     return url
 
 
+_MIGRATIONS = [
+    "ALTER TABLE job_descriptions ADD COLUMN IF NOT EXISTS embedding vector(384)",
+    "CREATE INDEX IF NOT EXISTS idx_job_descriptions_embedding ON job_descriptions USING hnsw (embedding vector_cosine_ops)",
+]
+
+
+def _run_migrations(engine):
+    for stmt in _MIGRATIONS:
+        try:
+            with engine.connect() as conn:
+                conn.execute(text(stmt))
+                conn.commit()
+        except Exception as e:
+            logger = get_logger(__name__)
+            logger.warning(f"Migration statement failed (non-fatal): {stmt[:60]}... -> {e}")
+
+
 def init_db():
     """Create all tables using a direct (non-pooled) connection."""
     direct_engine = create_engine(_direct_url())
@@ -32,6 +50,7 @@ def init_db():
             conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
             conn.commit()
         Base.metadata.create_all(bind=direct_engine)
+        _run_migrations(direct_engine)
     finally:
         direct_engine.dispose()
 

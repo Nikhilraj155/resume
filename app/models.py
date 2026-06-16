@@ -1,6 +1,6 @@
 import uuid
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import Column, String, Float, ForeignKey, Text
+from sqlalchemy import Column, String, Float, Boolean, ForeignKey, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from app.database import Base
@@ -109,3 +109,77 @@ class ResumeLanguage(Base):
     language = Column(String(100), nullable=False)
 
     resume = relationship("ParsedResume", back_populates="languages")
+
+
+# ── Job Description Reference Models (read-only, map to ai-service_2 tables) ──
+
+
+class JobDescriptionRef(Base):
+    __tablename__ = "job_descriptions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    original_text = Column(Text, nullable=False)
+    job_title = Column(String(300), nullable=True)
+    company_name = Column(String(300), nullable=True)
+    location = Column(String(300), nullable=True)
+    employment_type = Column(String(100), nullable=True)
+    salary_min = Column(Float, nullable=True)
+    salary_max = Column(Float, nullable=True)
+    salary_currency = Column(String(10), nullable=True)
+    experience_min = Column(Float, nullable=True)
+    experience_max = Column(Float, nullable=True)
+    summary = Column(Text, nullable=True)
+    industry = Column(String(100), nullable=True)
+    requirements = Column(Text, nullable=True)
+    keywords = Column(Text, nullable=True)
+    created_at = Column(Text, nullable=False)
+    embedding = Column(Vector(384), nullable=True)
+
+    skills = relationship("JobSkillRef", back_populates="job")
+    education_requirements = relationship("JobEducationRequirementRef", back_populates="job")
+    certifications = relationship("JobCertificationRef", back_populates="job")
+    responsibilities = relationship("JobResponsibilityRef", back_populates="job")
+
+
+class JobSkillRef(Base):
+    __tablename__ = "job_skills"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    job_id = Column(UUID(as_uuid=True), ForeignKey("job_descriptions.id", ondelete="CASCADE"), nullable=False)
+    skill = Column(String(200), nullable=False)
+    is_required = Column(Boolean, default=True)
+    category = Column(String(20), nullable=True)
+
+    job = relationship("JobDescriptionRef", back_populates="skills")
+
+
+class JobEducationRequirementRef(Base):
+    __tablename__ = "job_education_requirements"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    job_id = Column(UUID(as_uuid=True), ForeignKey("job_descriptions.id", ondelete="CASCADE"), nullable=False)
+    degree = Column(String(200), nullable=True)
+    required = Column(Boolean, default=True)
+
+    job = relationship("JobDescriptionRef", back_populates="education_requirements")
+
+
+class JobCertificationRef(Base):
+    __tablename__ = "job_certifications"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    job_id = Column(UUID(as_uuid=True), ForeignKey("job_descriptions.id", ondelete="CASCADE"), nullable=False)
+    name = Column(String(300), nullable=True)
+    required = Column(Boolean, default=True)
+
+    job = relationship("JobDescriptionRef", back_populates="certifications")
+
+
+class JobResponsibilityRef(Base):
+    __tablename__ = "job_responsibilities"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    job_id = Column(UUID(as_uuid=True), ForeignKey("job_descriptions.id", ondelete="CASCADE"), nullable=False)
+    responsibility = Column(Text, nullable=True)
+
+    job = relationship("JobDescriptionRef", back_populates="responsibilities")
