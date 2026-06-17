@@ -1,4 +1,4 @@
-from datetime import datetime
+import uuid
 from app.database import SessionLocal
 from app.models import (
     ParsedResume, PersonalInfo, Education, Experience,
@@ -7,21 +7,19 @@ from app.models import (
 from app.schemas.resume import ResumeParserResponseSchema
 from app.utils.logger import get_logger
 from sqlalchemy import update
-from app.models import ParsedResume
 from app.services.embedding_service import embedding_service
 
 logger = get_logger(__name__)
 
 
-def save_resume(filename: str, data: ResumeParserResponseSchema) -> None:
+def save_resume(filename: str, data: ResumeParserResponseSchema, resume_id: uuid.UUID) -> None:
     try:
         db = SessionLocal()
         try:
-            resume = ParsedResume(
-                filename=filename,
-                created_at=datetime.utcnow().isoformat()
-            )
-            db.add(resume)
+            resume = db.query(ParsedResume).filter(ParsedResume.id == resume_id).first()
+            if not resume:
+                logger.error(f"Resume {resume_id} not found in database")
+                return
             db.flush()
 
             if data.personal_info:

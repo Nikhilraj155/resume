@@ -33,6 +33,7 @@ class ExperienceSchema(BaseModel):
     work_history: List[WorkHistoryItemSchema] = Field(default_factory=list, description="List of all individual work experience entries")
 
 class ResumeParserResponseSchema(BaseModel):
+    id: Optional[str] = Field(None, description="Unique resume ID (UUID)")
     personal_info: PersonalInfoSchema
     education: List[EducationItemSchema] = Field(default_factory=list)
     experience: ExperienceSchema

@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 # Load env variables at startup
 load_dotenv()
 
-from app.routes import parser
+from app.routes import parser, matching
 from app.utils.logger import get_logger
 from app.database import init_db
 
@@ -40,6 +40,7 @@ templates = Jinja2Templates(directory=os.path.join(CURRENT_DIR, "templates"))
 
 # Include Routers
 app.include_router(parser.router)
+app.include_router(matching.router)
 
 
 @app.on_event("startup")

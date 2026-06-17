@@ -1,10 +1,14 @@
 import os
+import uuid
 from fastapi import APIRouter, UploadFile, File, HTTPException, status, BackgroundTasks
 from app.schemas.resume import ResumeParserResponseSchema
 from app.services.pdf_extractor import PDFExtractorService
 from app.services.resume_parser import ResumeParserService
 from app.services.resume_storage import save_resume
 from app.utils.logger import get_logger
+from app.database import SessionLocal
+from app.models import ParsedResume
+from datetime import datetime
 
 logger = get_logger(__name__)
 
@@ -39,7 +43,6 @@ async def parse_resume(file: UploadFile = File(...), background_tasks: Backgroun
     try:
         # 2. Save the uploaded file
         os.makedirs(UPLOAD_DIR, exist_ok=True)
-        import uuid
         unique_filename = f"{uuid.uuid4()}{file_ext}"
         saved_filepath = os.path.join(UPLOAD_DIR, unique_filename)
         
@@ -56,8 +59,27 @@ async def parse_resume(file: UploadFile = File(...), background_tasks: Backgroun
         # 3. Call resume parser to parse the file
         structured_data = resume_parser_service.parse_resume(saved_filepath)
         
-        # 4. Schedule DB save in background (non-blocking)
-        background_tasks.add_task(save_resume, filename, structured_data)
+        # 4. Create ParsedResume record synchronously to get the ID
+        resume_id = uuid.uuid4()
+        db = SessionLocal()
+        try:
+            resume = ParsedResume(
+                id=resume_id,
+                filename=filename,
+                created_at=datetime.utcnow().isoformat()
+            )
+            db.add(resume)
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
+        
+        structured_data.id = str(resume_id)
+        
+        # 5. Schedule related data save in background (non-blocking)
+        background_tasks.add_task(save_resume, filename, structured_data, resume_id)
         
         return structured_data
 
