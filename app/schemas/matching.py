@@ -15,6 +15,7 @@ class ScoreBreakdown(BaseModel):
     certification_match: float = 0.0
     specialization_match: float = 0.0
     location_match: float = 0.0
+    role_alignment: float = 1.0
 
 
 class MatchReasons(BaseModel):
@@ -24,6 +25,7 @@ class MatchReasons(BaseModel):
     certification: str = ""
     specialization: str = ""
     location: str = ""
+    role_alignment: str = ""
 
 
 class JobDetails(BaseModel):

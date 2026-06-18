@@ -28,6 +28,8 @@ def _direct_url() -> str:
 _MIGRATIONS = [
     "ALTER TABLE job_descriptions ADD COLUMN IF NOT EXISTS embedding vector(384)",
     "CREATE INDEX IF NOT EXISTS idx_job_descriptions_embedding ON job_descriptions USING hnsw (embedding vector_cosine_ops)",
+    "ALTER TABLE parsed_resumes ADD COLUMN IF NOT EXISTS embedding vector(384)",
+    "CREATE INDEX IF NOT EXISTS idx_parsed_resumes_embedding ON parsed_resumes USING hnsw (embedding vector_cosine_ops)",
 ]
 
 

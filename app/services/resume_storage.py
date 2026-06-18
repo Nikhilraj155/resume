@@ -79,44 +79,70 @@ def save_resume(filename: str, data: ResumeParserResponseSchema, resume_id: uuid
             db.commit()
             logger.info(f"Saved parsed resume {resume.id} for file: {filename}")
 
-            # Generate embedding
+            # Generate embedding using natural language for better semantic understanding
             try:
-                parts = []
-                exp = data.experience
-                if exp.specialization:
-                    parts.append(exp.specialization)
-                if exp.current_designation:
-                    parts.append(exp.current_designation)
-                if exp.current_hospital:
-                    parts.append(exp.current_hospital)
-                if exp.experience_years is not None:
-                    parts.append(f"{exp.experience_years} years")
-                for wh in exp.work_history:
-                    if wh.designation:
-                        parts.append(wh.designation)
-                    if wh.employer:
-                        parts.append(wh.employer)
-                for edu in data.education:
-                    if edu.degree:
-                        parts.append(edu.degree)
-                    if edu.specialization:
-                        parts.append(edu.specialization)
-                    if edu.college:
-                        parts.append(edu.college)
-                for skill in data.skills:
-                    parts.append(skill)
-                for cert in data.certifications:
-                    parts.append(cert)
-                for lang in data.languages:
-                    parts.append(lang)
+                sentences = []
                 pi = data.personal_info
-                if pi:
-                    if pi.city:
-                        parts.append(pi.city)
-                    if pi.state:
-                        parts.append(pi.state)
+                exp = data.experience
 
-                embedding_text = " ".join(parts)
+                if pi and (pi.first_name or pi.last_name):
+                    name = " ".join(filter(None, [pi.prefix, pi.first_name, pi.last_name]))
+                else:
+                    name = None
+
+                header_parts = []
+                if name:
+                    header_parts.append(name)
+                if exp:
+                    if exp.current_designation:
+                        header_parts.append(exp.current_designation)
+                    if exp.current_hospital:
+                        header_parts.append(f"at {exp.current_hospital}")
+                if header_parts:
+                    sentences.append(" ".join(header_parts) + ".")
+
+                if exp:
+                    if exp.specialization:
+                        sentences.append(f"Specialization in {exp.specialization}.")
+                    if exp.experience_years is not None:
+                        sentences.append(f"{exp.experience_years} years of experience.")
+                    for wh in exp.work_history:
+                        wh_parts = []
+                        if wh.designation:
+                            wh_parts.append(wh.designation)
+                        if wh.employer:
+                            wh_parts.append(f"at {wh.employer}")
+                        if wh_parts:
+                            sentences.append("Worked as " + " ".join(wh_parts) + ".")
+
+                if data.education:
+                    edu_strs = []
+                    for edu in data.education:
+                        parts = [p for p in [edu.degree, edu.specialization, edu.college] if p]
+                        if parts:
+                            edu_strs.append(" ".join(parts))
+                    if edu_strs:
+                        sentences.append("Education: " + ", ".join(edu_strs) + ".")
+
+                if data.skills:
+                    sentences.append("Skills: " + ", ".join(data.skills) + ".")
+
+                if data.certifications:
+                    sentences.append("Certifications: " + ", ".join(data.certifications) + ".")
+
+                if data.languages:
+                    sentences.append("Languages: " + ", ".join(data.languages) + ".")
+
+                if pi:
+                    loc_parts = []
+                    if pi.city:
+                        loc_parts.append(pi.city)
+                    if pi.state:
+                        loc_parts.append(pi.state)
+                    if loc_parts:
+                        sentences.append("Location: " + ", ".join(loc_parts) + ".")
+
+                embedding_text = " ".join(sentences)
                 embedding_vec = embedding_service.encode(embedding_text)
                 if embedding_vec is not None:
                     stmt = update(ParsedResume).where(ParsedResume.id == resume.id).values(embedding=embedding_vec)

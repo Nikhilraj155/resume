@@ -1,4 +1,5 @@
 import math
+import re
 from typing import List, Optional, Tuple
 from uuid import UUID
 
@@ -21,12 +22,85 @@ from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-_SEMANTIC_WEIGHT = 0.35
-_SKILL_WEIGHT = 0.20
+_SEMANTIC_WEIGHT = 0.25
+_SKILL_WEIGHT = 0.15
 _EXPERIENCE_WEIGHT = 0.15
 _CERTIFICATION_WEIGHT = 0.10
-_SPECIALIZATION_WEIGHT = 0.10
+_SPECIALIZATION_WEIGHT = 0.15
 _LOCATION_WEIGHT = 0.10
+_ROLE_ALIGNMENT_WEIGHT = 0.10
+
+_DOCTOR_KEYWORDS = {"physician", "doctor", "consultant", "specialist", "surgeon", "cardiologist",
+    "radiologist", "anesthesiologist", "dermatologist", "neurologist", "oncologist",
+    "ophthalmologist", "orthopedic", "pathologist", "pediatrician", "psychiatrist",
+    "md", "mbbs", "dm", "mch", "internal medicine", "cardiology", "neurology",
+    "pediatrics", "gynecology", "obstetrics", "dermatology", "psychiatry",
+    "radiology", "anesthesiology", "pathology", "ophthalmology", "orthopedics",
+    "oncology", "nephrology", "gastroenterology", "endocrinology", "rheumatology",
+    "pulmonology", "urology", "resident", "fellow", "attending", "senior resident"}
+
+_NURSE_KEYWORDS = {"nurse", "rn", "nursing", "cna", "lvn", "lpn", "bsc nursing", "gnm", "staff nurse"}
+
+_SPEC_INDUSTRY_MAP = {
+    "computer science": ["technology", "engineering", "software", "it", "information technology"],
+    "computer": ["technology", "engineering", "software", "it"],
+    "information technology": ["technology", "computer science"],
+    "mechanical": ["engineering", "manufacturing", "automotive"],
+    "electrical": ["engineering", "technology", "energy"],
+    "electronics": ["engineering", "technology"],
+    "civil": ["engineering", "construction"],
+    "business administration": ["business", "management", "finance", "consulting"],
+    "marketing": ["business", "advertising", "media"],
+    "finance": ["business", "banking", "insurance", "accounting"],
+    "accounting": ["business", "finance", "banking"],
+    "cardiology": ["healthcare", "medical", "hospital", "clinical"],
+    "internal medicine": ["healthcare", "medical", "hospital", "clinical"],
+    "pediatrics": ["healthcare", "medical", "hospital"],
+    "gynecology": ["healthcare", "medical", "hospital"],
+    "obstetrics": ["healthcare", "medical", "hospital"],
+    "neurology": ["healthcare", "medical", "hospital"],
+    "dermatology": ["healthcare", "medical", "hospital"],
+    "psychiatry": ["healthcare", "medical", "hospital"],
+    "radiology": ["healthcare", "medical", "hospital"],
+    "surgery": ["healthcare", "medical", "hospital"],
+    "anesthesiology": ["healthcare", "medical", "hospital"],
+    "pathology": ["healthcare", "medical", "hospital"],
+    "ophthalmology": ["healthcare", "medical", "hospital"],
+    "orthopedics": ["healthcare", "medical", "hospital"],
+    "oncology": ["healthcare", "medical", "hospital"],
+    "nephrology": ["healthcare", "medical", "hospital"],
+    "gastroenterology": ["healthcare", "medical", "hospital"],
+    "endocrinology": ["healthcare", "medical", "hospital"],
+    "rheumatology": ["healthcare", "medical", "hospital"],
+    "pulmonology": ["healthcare", "medical", "hospital"],
+    "urology": ["healthcare", "medical", "hospital"],
+    "general medicine": ["healthcare", "medical", "hospital"],
+    "emergency medicine": ["healthcare", "medical", "hospital"],
+    "family medicine": ["healthcare", "medical", "hospital"],
+    "preventive medicine": ["healthcare", "medical", "hospital"],
+}
+
+
+def _normalize_cert_name(name: str) -> str:
+    return re.sub(r'\s*\(.*?\)\s*', '', name).strip().lower()
+
+
+def _role_alignment(resume_spec: str, resume_designation: str, resume_education: list, resume_skills: set, job_title: str) -> float:
+    """Check if the candidate's role type aligns with the job role type.
+    Returns 1.0 for good alignment, lower values for role-type mismatch."""
+    if not job_title:
+        return 1.0
+    job_lower = job_title.lower()
+    resume_text = " ".join(filter(None, [resume_spec or "", resume_designation or ""])).lower()
+    edu_text = " ".join(e.degree or "" for e in resume_education if e).lower() if resume_education else ""
+    combined_text = f"{resume_text} {edu_text}"
+
+    is_doctor_track = any(kw in combined_text for kw in _DOCTOR_KEYWORDS)
+    is_nurse_job = any(kw in job_lower for kw in _NURSE_KEYWORDS)
+
+    if is_doctor_track and is_nurse_job:
+        return 0.0
+    return 1.0
 
 
 def _cosine_similarity(a: List[float], b: List[float]) -> float:
@@ -65,10 +139,17 @@ def _location_match(resume_city: Optional[str], resume_state: Optional[str], jd_
     if not resume_city and not resume_state:
         return 0.0
     jd_lower = jd_location.lower()
-    if resume_city and resume_city.lower() in jd_lower:
+    resume_city_lower = resume_city.lower().strip() if resume_city else ""
+    resume_state_lower = resume_state.lower().strip() if resume_state else ""
+    # Exact city match (either direction)
+    if resume_city_lower and (resume_city_lower in jd_lower or jd_lower in resume_city_lower):
         return 1.0
-    if resume_state and resume_state.lower() in jd_lower:
+    # State match in job location
+    if resume_state_lower and resume_state_lower in jd_lower:
         return 0.75
+    # Job location is a substring of resume city (e.g. "Java" in "Bengaluru, Java" — edge)
+    if resume_city_lower and resume_city_lower.startswith(jd_lower):
+        return 0.5
     return 0.0
 
 
@@ -86,45 +167,69 @@ def _build_candidate_name(pi: Optional[PersonalInfo]) -> Optional[str]:
 
 
 def _build_resume_embedding_text(resume: ParsedResume) -> str:
-    parts = []
+    sentences = []
+    pi = resume.personal_info
     exp = resume.experience
+
+    header_parts = []
+    if pi and (pi.first_name or pi.last_name):
+        header_parts.append(" ".join(filter(None, [pi.prefix, pi.first_name, pi.last_name])))
+    if exp:
+        if exp.current_designation:
+            header_parts.append(exp.current_designation)
+        if exp.current_hospital:
+            header_parts.append(f"at {exp.current_hospital}")
+    if header_parts:
+        sentences.append(" ".join(header_parts) + ".")
+
     if exp:
         if exp.specialization:
-            parts.append(exp.specialization)
-        if exp.current_designation:
-            parts.append(exp.current_designation)
-        if exp.current_hospital:
-            parts.append(exp.current_hospital)
+            sentences.append(f"Specialization in {exp.specialization}.")
         if exp.experience_years is not None:
-            parts.append(f"{exp.experience_years} years")
+            sentences.append(f"{exp.experience_years} years of experience.")
         for wh in exp.work_history:
+            wh_parts = []
             if wh.designation:
-                parts.append(wh.designation)
+                wh_parts.append(wh.designation)
             if wh.employer:
-                parts.append(wh.employer)
-    for edu in resume.education:
-        if edu.degree:
-            parts.append(edu.degree)
-        if edu.specialization:
-            parts.append(edu.specialization)
-        if edu.college:
-            parts.append(edu.college)
-    for skill in resume.skills:
-        if skill.skill:
-            parts.append(skill.skill)
-    for cert in resume.certifications:
-        if cert.certification:
-            parts.append(cert.certification)
-    for lang in resume.languages:
-        if lang.language:
-            parts.append(lang.language)
-    pi = resume.personal_info
+                wh_parts.append(f"at {wh.employer}")
+            if wh_parts:
+                sentences.append("Worked as " + " ".join(wh_parts) + ".")
+
+    if resume.education:
+        edu_strs = []
+        for edu in resume.education:
+            parts = [p for p in [edu.degree, edu.specialization, edu.college] if p]
+            if parts:
+                edu_strs.append(" ".join(parts))
+        if edu_strs:
+            sentences.append("Education: " + ", ".join(edu_strs) + ".")
+
+    if resume.skills:
+        skills_list = [s.skill for s in resume.skills if s.skill]
+        if skills_list:
+            sentences.append("Skills: " + ", ".join(skills_list) + ".")
+
+    if resume.certifications:
+        certs_list = [c.certification for c in resume.certifications if c.certification]
+        if certs_list:
+            sentences.append("Certifications: " + ", ".join(certs_list) + ".")
+
+    if resume.languages:
+        langs_list = [l.language for l in resume.languages if l.language]
+        if langs_list:
+            sentences.append("Languages: " + ", ".join(langs_list) + ".")
+
     if pi:
+        loc_parts = []
         if pi.city:
-            parts.append(pi.city)
+            loc_parts.append(pi.city)
         if pi.state:
-            parts.append(pi.state)
-    return " ".join(parts)
+            loc_parts.append(pi.state)
+        if loc_parts:
+            sentences.append("Location: " + ", ".join(loc_parts) + ".")
+
+    return " ".join(sentences)
 
 
 def _generate_semantic_reason(score: float) -> str:
@@ -243,6 +348,7 @@ def match_jobs(resume_id: UUID, top_k: int = 10) -> Tuple[List[JobMatchResult], 
         resume_skills_set = set(s.skill.lower() for s in resume.skills if s.skill)
         resume_certs_set = set(c.certification.lower() for c in resume.certifications if c.certification)
         resume_spec = exp.specialization if exp else None
+        resume_designation = exp.current_designation if exp else None
         resume_exp_years = exp.experience_years if exp else None
         resume_city = pi.city if pi else None
         resume_state = pi.state if pi else None
@@ -302,22 +408,40 @@ def match_jobs(resume_id: UUID, top_k: int = 10) -> Tuple[List[JobMatchResult], 
             exp_score = _experience_fit(resume_exp_years, full_job.experience_min, full_job.experience_max)
 
             # Certification match (Jaccard between resume certs and job certs)
-            jd_certs_set = set(c.name.lower() for c in full_job.certifications if c.name)
-            cert_score = _jaccard_similarity(jd_certs_set, resume_certs_set)
+            # Normalize cert names to strip parenthetical descriptions (e.g. "BLS (Basic Life Support)" → "bls")
+            jd_certs_set = set(_normalize_cert_name(c.name) for c in full_job.certifications if c.name)
+            resume_certs_norm_set = set(_normalize_cert_name(c) for c in resume_certs_set)
+            cert_score = _jaccard_similarity(jd_certs_set, resume_certs_norm_set)
 
             # Specialization match
             spec_score = 0.0
-            if resume_spec and full_job.industry:
+            if resume_spec:
                 spec_lower = resume_spec.lower()
-                ind_lower = full_job.industry.lower()
-                if spec_lower in ind_lower or ind_lower in spec_lower:
-                    spec_score = 1.0
-                elif jd_skills_set:
+                # Check against industry
+                if full_job.industry:
+                    ind_lower = full_job.industry.lower()
+                    if spec_lower in ind_lower or ind_lower in spec_lower:
+                        spec_score = 1.0
+                # Check against job title
+                if spec_score < 1.0 and full_job.job_title:
+                    title_lower = full_job.job_title.lower()
+                    if spec_lower in title_lower or title_lower in spec_lower:
+                        spec_score = 0.9
+                # Check against job skills
+                if spec_score < 0.9 and jd_skills_set:
                     if any(s in spec_lower for s in jd_skills_set) or any(spec_lower in s for s in jd_skills_set):
                         spec_score = 0.75
+                # Known specialization ↔ industry mappings
+                if spec_score < 0.75 and full_job.industry:
+                    mapped_industries = _SPEC_INDUSTRY_MAP.get(spec_lower, [])
+                    if full_job.industry.lower() in mapped_industries:
+                        spec_score = 0.8
 
             # Location match
             loc_score = _location_match(resume_city, resume_state, full_job.location)
+
+            # Role alignment (doctor vs nurse, etc.)
+            role_score = _role_alignment(resume_spec, resume_designation, resume.education, resume_skills_set, full_job.job_title)
 
             # Weighted overall score
             overall = (
@@ -327,6 +451,7 @@ def match_jobs(resume_id: UUID, top_k: int = 10) -> Tuple[List[JobMatchResult], 
                 + _CERTIFICATION_WEIGHT * cert_score
                 + _SPECIALIZATION_WEIGHT * spec_score
                 + _LOCATION_WEIGHT * loc_score
+                + _ROLE_ALIGNMENT_WEIGHT * role_score
             )
 
             # Salary range string
@@ -342,7 +467,15 @@ def match_jobs(resume_id: UUID, top_k: int = 10) -> Tuple[List[JobMatchResult], 
 
             # Count matched skills/certs for reasons
             matched_skills = len(jd_skills_set & resume_skills_set)
-            matched_certs = len(jd_certs_set & resume_certs_set)
+            matched_certs = len(jd_certs_set & resume_certs_norm_set)
+
+            # Role alignment reason
+            if role_score < 0.5:
+                role_reason = f"Role type mismatch: candidate's medical qualifications do not align with '{full_job.job_title}' role"
+            elif role_score < 1.0:
+                role_reason = "Partial role alignment"
+            else:
+                role_reason = "Role type aligns with job requirements"
 
             reasons = MatchReasons(
                 semantic=_generate_semantic_reason(semantic_sim),
@@ -351,6 +484,7 @@ def match_jobs(resume_id: UUID, top_k: int = 10) -> Tuple[List[JobMatchResult], 
                 certification=_generate_certification_reason(cert_score, matched_certs, len(jd_certs_set)),
                 specialization=_generate_specialization_reason(spec_score, resume_spec, full_job.industry),
                 location=_generate_location_reason(loc_score, resume_city, resume_state, full_job.location),
+                role_alignment=role_reason,
             )
 
             results.append(JobMatchResult(
@@ -372,6 +506,7 @@ def match_jobs(resume_id: UUID, top_k: int = 10) -> Tuple[List[JobMatchResult], 
                     certification_match=round(cert_score, 4),
                     specialization_match=round(spec_score, 4),
                     location_match=round(loc_score, 4),
+                    role_alignment=round(role_score, 4),
                 ),
                 reasons=reasons,
             ))
@@ -379,6 +514,6 @@ def match_jobs(resume_id: UUID, top_k: int = 10) -> Tuple[List[JobMatchResult], 
         results.sort(key=lambda r: r.overall_score, reverse=True)
         top_results = results[:top_k]
 
-        return top_results, candidate_name, len(results)
+        return top_results, candidate_name, len(top_results)
     finally:
         db.close()

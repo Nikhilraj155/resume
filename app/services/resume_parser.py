@@ -31,6 +31,47 @@ KNOWN_STATES = {
     "karnataka", "delhi", "gujarat", "florida", "illinois", "pennsylvania", "ohio", 
     "kerala", "telangana", "andhra pradesh", "west bengal"
 }
+KNOWN_CITIES = {"bengaluru", "bangalore", "mumbai", "pune", "delhi", "new delhi", "hyderabad", "chennai", "kolkata", "ahmedabad", "jaipur", "lucknow", "noida", "gurgaon", "chandigarh", "indore", "bhopal", "surat", "kochi", "goa", "nagpur", "patna", "thane", "agra", "varanasi", "nashik", "meerut", "rajkot", "vadodara", "vijayawada", "mangalore", "mysore"}
+
+
+def _clean_location_string(raw: str) -> str:
+    """Strip email, phone, URLs, social handles, pipe-separated junk from a location string,
+    returning just the most likely city/place name."""
+    if not raw:
+        return raw
+    cleaned = raw
+    # Remove email addresses
+    cleaned = re.sub(r'[\w\.-]+@[\w\.-]+\.\w+', '', cleaned)
+    # Remove phone numbers
+    cleaned = re.sub(r'\+?\d{1,4}[-.\s]?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4,6}', '', cleaned)
+    # Remove URLs
+    cleaned = re.sub(r'https?://\S+', '', cleaned)
+    cleaned = re.sub(r'www\.\S+', '', cleaned)
+    # Remove social handles (#handle, @handle)
+    cleaned = re.sub(r'[#@]\w+', '', cleaned)
+    # Remove pipe-separated segments - keep the last one (likely the city)
+    if '|' in cleaned:
+        segments = [s.strip() for s in cleaned.split('|') if s.strip()]
+        valid_segments = [s for s in segments if not any(c in s for c in ['@', '#', '+', '.com', '.in'])]
+        if valid_segments:
+            cleaned = valid_segments[-1]
+        else:
+            cleaned = segments[-1]
+    # Extract just alphabetic words
+    words = re.findall(r'[A-Za-z]+', cleaned)
+    # Check against known cities first
+    for word in words:
+        if word.lower() in KNOWN_CITIES:
+            return word.title()
+    # Fall back to the last word with 3+ characters (most likely the city)
+    for word in reversed(words):
+        if len(word) >= 3:
+            return word.title()
+    # Last resort: return the first substantial word
+    for word in words:
+        if len(word) >= 2:
+            return word.title()
+    return cleaned.strip()
 
 class ResumeParserService:
     def __init__(self):
@@ -200,43 +241,77 @@ class ResumeParserService:
         city = None
         state = None
         country = None
-        
-        # First, try to parse from the header block (lines 2-4 usually contain address)
+
+        # Collect all raw header lines for fallback extraction
         header_text = sections.get("header", "")
+        header_lines = []
         if header_text:
             header_lines = [line.strip() for line in header_text.split("\n") if line.strip()]
+
+        # First, try to parse from the header block (lines 2-4 usually contain address)
+        if header_lines:
             for line in header_lines[1:4]:
                 parts = [p.strip() for p in line.split(",") if p.strip()]
-                if len(parts) == 3:
-                    city = parts[0].title()
-                    state = parts[1].title()
-                    country = parts[2].title()
-                    break
-                elif len(parts) == 2:
-                    city = parts[0].title()
-                    part2_lower = parts[1].lower()
+                if len(parts) >= 2:
+                    raw_city = parts[0].strip()
+                    raw_state_or_country = parts[1].strip()
+
+                    # Skip if city looks like a degree/qualification (e.g. "MBBS", "MD")
+                    if any(re.search(rf'\b{re.escape(d)}\b', raw_city, re.IGNORECASE) for d in DEGREE_KEYWORDS):
+                        continue
+                    # Skip if state looks like a degree/qualification
+                    if any(re.search(rf'\b{re.escape(d)}\b', raw_state_or_country, re.IGNORECASE) for d in DEGREE_KEYWORDS):
+                        continue
+
+                    # Check if extracted city is clean (only letters/spaces) or garbled
+                    if re.match(r'^[A-Za-z\s]+$', raw_city):
+                        city = raw_city.title()
+                    else:
+                        # City field is garbled — try to extract a clean city name
+                        cleaned = _clean_location_string(raw_city)
+                        if cleaned and len(cleaned) >= 2:
+                            city = cleaned
+                        else:
+                            # Search header lines for known city names
+                            for hl in header_lines:
+                                for known in KNOWN_CITIES:
+                                    if re.search(rf'(?<![A-Za-z]){re.escape(known)}(?![A-Za-z])', hl, re.IGNORECASE):
+                                        city = known.title()
+                                        break
+                                if city:
+                                    break
+
+                    part2_lower = raw_state_or_country.lower()
                     if part2_lower in KNOWN_COUNTRIES:
                         country = parts[1].title()
                     elif part2_lower in KNOWN_STATES:
                         state = parts[1].title()
                     else:
                         state = parts[1].title()
-                    break
 
-        # If not found in header, fall back to spaCy GPE entities
-        if not city or not state or not country:
-            gpe_entities = entities.get("GPE", [])
-            for gpe in gpe_entities:
-                gpe_lower = gpe.lower()
-                if gpe_lower in KNOWN_COUNTRIES:
-                    if not country:
-                        country = gpe
-                elif gpe_lower in KNOWN_STATES:
-                    if not state:
-                        state = gpe
-                else:
-                    if not city:
-                        city = gpe
+                    if len(parts) >= 3:
+                        part3_lower = parts[2].lower()
+                        if part3_lower in KNOWN_COUNTRIES:
+                            country = parts[2].title()
+                        elif part3_lower in KNOWN_STATES and not state:
+                            state = parts[2].title()
+
+                    if city:
+                        break
+
+        # If city still missing or garbled, fall back to spaCy GPE entities
+        gpe_entities = entities.get("GPE", [])
+        for gpe in gpe_entities:
+            gpe_lower = gpe.lower()
+            if gpe_lower in KNOWN_COUNTRIES:
+                if not country:
+                    country = gpe
+            elif gpe_lower in KNOWN_STATES:
+                if not state:
+                    state = gpe
+            else:
+                if not city:
+                    city = gpe
 
         # General fallbacks from text search
         if not country:
