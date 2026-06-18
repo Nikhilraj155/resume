@@ -1,3 +1,4 @@
+import asyncio
 from fastapi import APIRouter, HTTPException, status
 from uuid import UUID
 
@@ -23,7 +24,9 @@ router = APIRouter(prefix="/ai", tags=["Job Matching"])
 )
 async def match_jobs_endpoint(request: MatchJobsRequest):
     try:
-        matches, candidate_name, total = match_jobs(request.resume_id, request.top_k)
+        matches, candidate_name, total = await asyncio.to_thread(
+            match_jobs, request.resume_id, request.top_k
+        )
 
         if candidate_name is None and total == 0:
             raise HTTPException(
@@ -40,8 +43,8 @@ async def match_jobs_endpoint(request: MatchJobsRequest):
     except HTTPException:
         raise
     except Exception as e:
-        logger.critical(f"Job matching failed: {str(e)}", exc_info=True)
+        logger.critical(f"Job matching failed: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Matching failed: {str(e)}",
+            detail="An internal error occurred during job matching.",
         )

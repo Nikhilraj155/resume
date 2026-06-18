@@ -1,13 +1,16 @@
 import uuid
+import json
+from sqlalchemy import update
 from app.database import SessionLocal
 from app.models import (
     ParsedResume, PersonalInfo, Education, Experience,
-    WorkHistory, ResumeSkill, ResumeCertification, ResumeLanguage
+    WorkHistory, WorkHistoryResponsibility, ResumeSkill,
+    ResumeCertification, ResumeLanguage, ResumePublication,
 )
 from app.schemas.resume import ResumeParserResponseSchema
 from app.utils.logger import get_logger
-from sqlalchemy import update
 from app.services.embedding_service import embedding_service
+from app.services.embedding_utils import build_embedding_text_from_schema
 
 logger = get_logger(__name__)
 
@@ -20,7 +23,6 @@ def save_resume(filename: str, data: ResumeParserResponseSchema, resume_id: uuid
             if not resume:
                 logger.error(f"Resume {resume_id} not found in database")
                 return
-            db.flush()
 
             if data.personal_info:
                 pi = data.personal_info
@@ -33,18 +35,29 @@ def save_resume(filename: str, data: ResumeParserResponseSchema, resume_id: uuid
                     phone=pi.phone,
                     city=pi.city,
                     state=pi.state,
-                    country=pi.country
+                    country=pi.country,
+                    linkedin=pi.linkedin,
+                    social_links=json.dumps(pi.social_links) if pi.social_links else None,
+                    profile_summary=pi.profile_summary,
                 ))
 
-            for edu in data.education:
-                db.add(Education(
-                    resume_id=resume.id,
-                    degree=edu.degree,
-                    specialization=edu.specialization,
-                    college=edu.college,
-                    start_year=edu.start_year,
-                    end_year=edu.end_year
-                ))
+            if data.education:
+                db.bulk_insert_mappings(Education, [
+                    dict(
+                        resume_id=resume.id,
+                        degree=edu.degree,
+                        specialization=edu.specialization,
+                        college=edu.college,
+                        university=edu.university,
+                        start_year=edu.start_year,
+                        end_year=edu.end_year,
+                        gpa=edu.gpa,
+                        percentage=edu.percentage,
+                        board=edu.board,
+                        level=edu.level,
+                    )
+                    for edu in data.education
+                ])
 
             exp = data.experience
             exp_row = Experience(
@@ -53,106 +66,90 @@ def save_resume(filename: str, data: ResumeParserResponseSchema, resume_id: uuid
                 experience_years=exp.experience_years,
                 current_designation=exp.current_designation,
                 current_hospital=exp.current_hospital,
-                registration_number=exp.registration_number
+                current_department=exp.current_department,
+                registration_number=exp.registration_number,
+                registration_council=exp.registration_council,
+                registration_year=exp.registration_year,
             )
             db.add(exp_row)
             db.flush()
 
-            for wh in exp.work_history:
-                db.add(WorkHistory(
-                    experience_id=exp_row.id,
-                    designation=wh.designation,
-                    employer=wh.employer,
-                    start_date=wh.start_date,
-                    end_date=wh.end_date
-                ))
+            if exp.work_history:
+                for wh in exp.work_history:
+                    wh_row = WorkHistory(
+                        experience_id=exp_row.id,
+                        designation=wh.designation,
+                        employer=wh.employer,
+                        employer_city=wh.employer_city,
+                        department=wh.department,
+                        start_date=wh.start_date,
+                        end_date=wh.end_date,
+                        duration_months=wh.duration_months,
+                        employment_type=wh.employment_type,
+                    )
+                    db.add(wh_row)
+                    db.flush()
 
-            for skill in data.skills:
-                db.add(ResumeSkill(resume_id=resume.id, skill=skill))
+                    if wh.responsibilities:
+                        db.bulk_insert_mappings(WorkHistoryResponsibility, [
+                            dict(
+                                work_history_id=wh_row.id,
+                                responsibility=resp,
+                            )
+                            for resp in wh.responsibilities
+                        ])
 
-            for cert in data.certifications:
-                db.add(ResumeCertification(resume_id=resume.id, certification=cert))
+            # Skills - categorized
+            if data.skills:
+                skill_rows = []
+                for cat in ["clinical", "technical", "soft_skills"]:
+                    skills_list = getattr(data.skills, cat, [])
+                    for skill in skills_list:
+                        skill_rows.append(dict(resume_id=resume.id, skill=skill, category=cat))
+                if skill_rows:
+                    db.bulk_insert_mappings(ResumeSkill, skill_rows)
 
-            for lang in data.languages:
-                db.add(ResumeLanguage(resume_id=resume.id, language=lang))
+            # Certifications - structured
+            if data.certifications:
+                db.bulk_insert_mappings(ResumeCertification, [
+                    dict(
+                        resume_id=resume.id,
+                        name=cert.name,
+                        abbreviation=cert.abbreviation,
+                        issuer=cert.issuer,
+                        year=cert.year,
+                        description=cert.description,
+                    )
+                    for cert in data.certifications
+                ])
+
+            # Languages - with proficiency
+            if data.languages:
+                db.bulk_insert_mappings(ResumeLanguage, [
+                    dict(
+                        resume_id=resume.id,
+                        language=lang.language,
+                        proficiency=lang.proficiency,
+                    )
+                    for lang in data.languages
+                ])
+
+            # Publications
+            if data.publications:
+                db.bulk_insert_mappings(ResumePublication, [
+                    dict(
+                        resume_id=resume.id,
+                        title=pub.title,
+                        journal=pub.journal,
+                        year=pub.year,
+                        authors=json.dumps(pub.authors) if pub.authors else None,
+                        doi=pub.doi,
+                    )
+                    for pub in data.publications
+                ])
 
             db.commit()
             logger.info(f"Saved parsed resume {resume.id} for file: {filename}")
-
-            # Generate embedding using natural language for better semantic understanding
-            try:
-                sentences = []
-                pi = data.personal_info
-                exp = data.experience
-
-                if pi and (pi.first_name or pi.last_name):
-                    name = " ".join(filter(None, [pi.prefix, pi.first_name, pi.last_name]))
-                else:
-                    name = None
-
-                header_parts = []
-                if name:
-                    header_parts.append(name)
-                if exp:
-                    if exp.current_designation:
-                        header_parts.append(exp.current_designation)
-                    if exp.current_hospital:
-                        header_parts.append(f"at {exp.current_hospital}")
-                if header_parts:
-                    sentences.append(" ".join(header_parts) + ".")
-
-                if exp:
-                    if exp.specialization:
-                        sentences.append(f"Specialization in {exp.specialization}.")
-                    if exp.experience_years is not None:
-                        sentences.append(f"{exp.experience_years} years of experience.")
-                    for wh in exp.work_history:
-                        wh_parts = []
-                        if wh.designation:
-                            wh_parts.append(wh.designation)
-                        if wh.employer:
-                            wh_parts.append(f"at {wh.employer}")
-                        if wh_parts:
-                            sentences.append("Worked as " + " ".join(wh_parts) + ".")
-
-                if data.education:
-                    edu_strs = []
-                    for edu in data.education:
-                        parts = [p for p in [edu.degree, edu.specialization, edu.college] if p]
-                        if parts:
-                            edu_strs.append(" ".join(parts))
-                    if edu_strs:
-                        sentences.append("Education: " + ", ".join(edu_strs) + ".")
-
-                if data.skills:
-                    sentences.append("Skills: " + ", ".join(data.skills) + ".")
-
-                if data.certifications:
-                    sentences.append("Certifications: " + ", ".join(data.certifications) + ".")
-
-                if data.languages:
-                    sentences.append("Languages: " + ", ".join(data.languages) + ".")
-
-                if pi:
-                    loc_parts = []
-                    if pi.city:
-                        loc_parts.append(pi.city)
-                    if pi.state:
-                        loc_parts.append(pi.state)
-                    if loc_parts:
-                        sentences.append("Location: " + ", ".join(loc_parts) + ".")
-
-                embedding_text = " ".join(sentences)
-                embedding_vec = embedding_service.encode(embedding_text)
-                if embedding_vec is not None:
-                    stmt = update(ParsedResume).where(ParsedResume.id == resume.id).values(embedding=embedding_vec)
-                    db.execute(stmt)
-                    db.commit()
-                    logger.debug(f"Embedding stored for resume {resume.id}")
-                else:
-                    logger.warning(f"Embedding skipped for resume {resume.id} (encode returned None)")
-            except Exception as e:
-                logger.warning(f"Embedding generation failed for resume {resume.id} (non-fatal): {e}")
         except Exception:
             db.rollback()
             raise
@@ -160,3 +157,21 @@ def save_resume(filename: str, data: ResumeParserResponseSchema, resume_id: uuid
             db.close()
     except Exception as e:
         logger.error(f"Failed to save resume to database: {e}", exc_info=True)
+
+
+def store_embedding(resume_id: uuid.UUID, data: ResumeParserResponseSchema) -> None:
+    db = SessionLocal()
+    try:
+        embedding_text = build_embedding_text_from_schema(data)
+        embedding_vec = embedding_service.encode(embedding_text)
+        if embedding_vec is not None:
+            stmt = update(ParsedResume).where(ParsedResume.id == resume_id).values(embedding=embedding_vec)
+            db.execute(stmt)
+            db.commit()
+            logger.debug(f"Embedding stored for resume {resume_id}")
+        else:
+            logger.warning(f"Embedding skipped for resume {resume_id} (encode returned None)")
+    except Exception as e:
+        logger.warning(f"Embedding generation failed for resume {resume_id} (non-fatal): {e}")
+    finally:
+        db.close()

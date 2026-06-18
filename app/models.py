@@ -1,6 +1,6 @@
 import uuid
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import Column, String, Float, Boolean, ForeignKey, Text
+from sqlalchemy import Column, String, Float, Boolean, ForeignKey, Text, Integer
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from app.database import Base
@@ -20,6 +20,7 @@ class ParsedResume(Base):
     skills = relationship("ResumeSkill", back_populates="resume", cascade="all, delete-orphan")
     certifications = relationship("ResumeCertification", back_populates="resume", cascade="all, delete-orphan")
     languages = relationship("ResumeLanguage", back_populates="resume", cascade="all, delete-orphan")
+    publications = relationship("ResumePublication", back_populates="resume", cascade="all, delete-orphan")
 
 
 class PersonalInfo(Base):
@@ -35,6 +36,9 @@ class PersonalInfo(Base):
     city = Column(String(100), nullable=True)
     state = Column(String(100), nullable=True)
     country = Column(String(100), nullable=True)
+    linkedin = Column(String(255), nullable=True)
+    social_links = Column(Text, nullable=True)
+    profile_summary = Column(Text, nullable=True)
 
     resume = relationship("ParsedResume", back_populates="personal_info")
 
@@ -47,8 +51,13 @@ class Education(Base):
     degree = Column(String(100), nullable=True)
     specialization = Column(String(200), nullable=True)
     college = Column(String(300), nullable=True)
+    university = Column(String(300), nullable=True)
     start_year = Column(String(10), nullable=True)
     end_year = Column(String(10), nullable=True)
+    gpa = Column(String(20), nullable=True)
+    percentage = Column(String(20), nullable=True)
+    board = Column(String(50), nullable=True)
+    level = Column(String(20), nullable=True)
 
     resume = relationship("ParsedResume", back_populates="education")
 
@@ -62,7 +71,10 @@ class Experience(Base):
     experience_years = Column(Float, nullable=True)
     current_designation = Column(String(300), nullable=True)
     current_hospital = Column(String(300), nullable=True)
+    current_department = Column(String(200), nullable=True)
     registration_number = Column(String(100), nullable=True)
+    registration_council = Column(String(200), nullable=True)
+    registration_year = Column(Integer, nullable=True)
 
     resume = relationship("ParsedResume", back_populates="experience")
     work_history = relationship("WorkHistory", back_populates="experience", cascade="all, delete-orphan")
@@ -75,10 +87,25 @@ class WorkHistory(Base):
     experience_id = Column(UUID(as_uuid=True), ForeignKey("experience.id", ondelete="CASCADE"), nullable=False)
     designation = Column(String(300), nullable=True)
     employer = Column(String(300), nullable=True)
+    employer_city = Column(String(100), nullable=True)
+    department = Column(String(200), nullable=True)
     start_date = Column(String(50), nullable=True)
     end_date = Column(String(50), nullable=True)
+    duration_months = Column(Integer, nullable=True)
+    employment_type = Column(String(50), nullable=True)
 
     experience = relationship("Experience", back_populates="work_history")
+    responsibilities = relationship("WorkHistoryResponsibility", back_populates="work_history", cascade="all, delete-orphan")
+
+
+class WorkHistoryResponsibility(Base):
+    __tablename__ = "work_history_responsibilities"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    work_history_id = Column(UUID(as_uuid=True), ForeignKey("work_history.id", ondelete="CASCADE"), nullable=False)
+    responsibility = Column(Text, nullable=False)
+
+    work_history = relationship("WorkHistory", back_populates="responsibilities")
 
 
 class ResumeSkill(Base):
@@ -87,6 +114,7 @@ class ResumeSkill(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     resume_id = Column(UUID(as_uuid=True), ForeignKey("parsed_resumes.id", ondelete="CASCADE"), nullable=False)
     skill = Column(String(200), nullable=False)
+    category = Column(String(20), nullable=True)
 
     resume = relationship("ParsedResume", back_populates="skills")
 
@@ -96,7 +124,11 @@ class ResumeCertification(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     resume_id = Column(UUID(as_uuid=True), ForeignKey("parsed_resumes.id", ondelete="CASCADE"), nullable=False)
-    certification = Column(String(300), nullable=False)
+    name = Column(String(300), nullable=False)
+    abbreviation = Column(String(50), nullable=True)
+    issuer = Column(String(300), nullable=True)
+    year = Column(Integer, nullable=True)
+    description = Column(Text, nullable=True)
 
     resume = relationship("ParsedResume", back_populates="certifications")
 
@@ -107,8 +139,23 @@ class ResumeLanguage(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     resume_id = Column(UUID(as_uuid=True), ForeignKey("parsed_resumes.id", ondelete="CASCADE"), nullable=False)
     language = Column(String(100), nullable=False)
+    proficiency = Column(String(20), nullable=True)
 
     resume = relationship("ParsedResume", back_populates="languages")
+
+
+class ResumePublication(Base):
+    __tablename__ = "resume_publications"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    resume_id = Column(UUID(as_uuid=True), ForeignKey("parsed_resumes.id", ondelete="CASCADE"), nullable=False)
+    title = Column(String(500), nullable=True)
+    journal = Column(String(300), nullable=True)
+    year = Column(Integer, nullable=True)
+    authors = Column(Text, nullable=True)
+    doi = Column(String(200), nullable=True)
+
+    resume = relationship("ParsedResume", back_populates="publications")
 
 
 # ── Job Description Reference Models (read-only, map to ai-service_2 tables) ──

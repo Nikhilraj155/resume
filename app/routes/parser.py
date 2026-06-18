@@ -1,13 +1,16 @@
 import os
 import uuid
+import asyncio
+import functools
 from fastapi import APIRouter, UploadFile, File, HTTPException, status
+from fastapi.concurrency import run_in_threadpool
 from app.schemas.resume import ResumeParserResponseSchema
-from app.services.pdf_extractor import PDFExtractorService
 from app.services.resume_parser import ResumeParserService
-from app.services.resume_storage import save_resume
+from app.services.resume_storage import save_resume, store_embedding
 from app.utils.logger import get_logger
 from app.database import SessionLocal
 from app.models import ParsedResume
+from app.config import settings
 from datetime import datetime
 
 logger = get_logger(__name__)
@@ -15,8 +18,20 @@ logger = get_logger(__name__)
 router = APIRouter(prefix="/ai", tags=["Resume Parser"])
 resume_parser_service = ResumeParserService()
 
-# Directory configuration for uploaded files
 UPLOAD_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "uploads")
+
+MAX_UPLOAD_BYTES = settings.max_upload_size_mb * 1024 * 1024
+
+ALLOWED_EXTS = {".pdf", ".docx"}
+ALLOWED_TYPES = {"application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"}
+
+
+async def _run_storage(filename: str, structured_data: ResumeParserResponseSchema,
+                       resume_id: uuid.UUID):
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, functools.partial(save_resume, filename, structured_data, resume_id))
+    await loop.run_in_executor(None, functools.partial(store_embedding, resume_id, structured_data))
+
 
 @router.post(
     "/parse-resume",
@@ -26,13 +41,10 @@ UPLOAD_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.pat
     description="Upload a doctor's resume in PDF and DOCX format to extract structured, normalized profile information."
 )
 async def parse_resume(file: UploadFile = File(...)):
-    # 1. Validate file extension/type (PDF and DOCX supported)
     filename = file.filename or ""
     file_ext = os.path.splitext(filename)[1].lower()
-    allowed_exts = {".pdf", ".docx"}
-    allowed_types = {"application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"}
-    
-    if file_ext not in allowed_exts and file.content_type not in allowed_types:
+
+    if file_ext not in ALLOWED_EXTS and file.content_type not in ALLOWED_TYPES:
         logger.error(f"Rejected file with invalid format: filename='{filename}', content_type='{file.content_type}'")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -41,25 +53,29 @@ async def parse_resume(file: UploadFile = File(...)):
 
     saved_filepath = None
     try:
-        # 2. Save the uploaded file
         os.makedirs(UPLOAD_DIR, exist_ok=True)
         unique_filename = f"{uuid.uuid4()}{file_ext}"
         saved_filepath = os.path.join(UPLOAD_DIR, unique_filename)
-        
+
         logger.info(f"Saving uploaded file '{filename}' as '{unique_filename}'")
         await file.seek(0)
-        contents = await file.read()
-        
-        if len(contents) == 0:
-            raise ValueError("The uploaded PDF file is empty.")
-            
+
+        size = 0
         with open(saved_filepath, "wb") as f:
-            f.write(contents)
-        
-        # 3. Call resume parser to parse the file
-        structured_data = resume_parser_service.parse_resume(saved_filepath)
-        
-        # 4. Create ParsedResume record synchronously to get the ID
+            while True:
+                chunk = await file.read(65536)
+                if not chunk:
+                    break
+                size += len(chunk)
+                if size > MAX_UPLOAD_BYTES:
+                    raise ValueError(f"File exceeds maximum size of {settings.max_upload_size_mb}MB")
+                f.write(chunk)
+
+        if size == 0:
+            raise ValueError("The uploaded file is empty.")
+
+        structured_data = await run_in_threadpool(resume_parser_service.parse_resume, saved_filepath)
+
         resume_id = uuid.uuid4()
         db = SessionLocal()
         try:
@@ -75,31 +91,30 @@ async def parse_resume(file: UploadFile = File(...)):
             raise
         finally:
             db.close()
-        
+
         structured_data.id = str(resume_id)
-        
-        # 5. Save related data synchronously (ensures data + embedding are available immediately)
-        save_resume(filename, structured_data, resume_id)
-        
+
+        asyncio.create_task(_run_storage(filename, structured_data, resume_id))
+
         return structured_data
 
     except ValueError as ve:
-        logger.error(f"Validation or parsing error: {str(ve)}")
+        logger.error(f"Validation or parsing error: {ve}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(ve)
         )
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.critical(f"System failure while parsing resume: {str(e)}")
+        logger.critical(f"System failure while parsing resume: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"An error occurred while processing the resume: {str(e)}"
+            detail="An internal error occurred while processing the resume."
         )
     finally:
-        # Optional: clean up the saved file to save space
         if saved_filepath and os.path.exists(saved_filepath):
             try:
                 os.remove(saved_filepath)
-                logger.info(f"Cleaned up temporary file: {saved_filepath}")
             except Exception as e:
-                logger.warning(f"Failed to delete temporary file {saved_filepath}: {str(e)}")
+                logger.warning(f"Failed to delete temporary file {saved_filepath}: {e}")
