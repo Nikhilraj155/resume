@@ -1,12 +1,10 @@
 import os
 import uuid
-import asyncio
-import functools
 from fastapi import APIRouter, UploadFile, File, HTTPException, status
 from fastapi.concurrency import run_in_threadpool
 from app.schemas.resume import ResumeParserResponseSchema
 from app.services.resume_parser import ResumeParserService
-from app.services.resume_storage import save_resume, store_embedding
+from app.tasks import store_resume_data_task
 from app.utils.logger import get_logger
 from app.database import SessionLocal
 from app.models import ParsedResume
@@ -24,13 +22,6 @@ MAX_UPLOAD_BYTES = settings.max_upload_size_mb * 1024 * 1024
 
 ALLOWED_EXTS = {".pdf", ".docx"}
 ALLOWED_TYPES = {"application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"}
-
-
-async def _run_storage(filename: str, structured_data: ResumeParserResponseSchema,
-                       resume_id: uuid.UUID):
-    loop = asyncio.get_event_loop()
-    await loop.run_in_executor(None, functools.partial(save_resume, filename, structured_data, resume_id))
-    await loop.run_in_executor(None, functools.partial(store_embedding, resume_id, structured_data))
 
 
 @router.post(
@@ -94,7 +85,7 @@ async def parse_resume(file: UploadFile = File(...)):
 
         structured_data.id = str(resume_id)
 
-        asyncio.create_task(_run_storage(filename, structured_data, resume_id))
+        store_resume_data_task.delay(filename, structured_data.model_dump(), str(resume_id))
 
         return structured_data
 

@@ -1,0 +1,14 @@
+.env
+.venv/
+venv/
+__pycache__/
+*.pyc
+.git/
+.gitignore
+.pytest_cache/
+tests/
+resumess/
+uploads/
+docssuperpowersspecs/
+postman_collection.json
+test_verify.py

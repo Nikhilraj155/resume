@@ -49,10 +49,9 @@ async def on_startup():
         logger.warning(f"Database initialization failed (non-fatal): {e}")
 
 
-@app.get("/", response_class=HTMLResponse, tags=["UI"])
-async def render_ui(request: Request):
-    logger.info("Serving frontend dashboard index.html to client")
-    return templates.TemplateResponse("index.html", {"request": request})
+@app.get("/", tags=["Health"])
+async def root():
+    return {"message": "Doctor Resume Parser AI Service is running", "docs": "/docs"}
 
 
 @app.get("/health", status_code=status.HTTP_200_OK, tags=["Health"])
