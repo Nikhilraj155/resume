@@ -4,6 +4,7 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     database_url: str = ""
+    redis_url: str = "redis://localhost:6379/0"
     log_level: str = "INFO"
     port: int = 8000
     max_upload_size_mb: int = 10
