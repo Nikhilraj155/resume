@@ -1,62 +1,64 @@
 # Doctor Resume Parser AI Microservice
 
-A production-ready AI-powered resume parsing microservice built with **FastAPI** and **Google Gemini 2.5 Flash** to extract structured profile information from doctor resumes (PDF/DOCX). The parsed output directly maps to a 4-step frontend profile completion form without requiring additional conversion.
-
----
+An AI-powered resume parsing microservice built with **FastAPI** and open-source NLP (spaCy, SentenceTransformers) to extract structured profile information from doctor resumes (PDF/DOCX). The parsed output maps directly to a 4-step profile completion form.
 
 ## Tech Stack
 * **Language**: Python 3.10+
 * **Framework**: FastAPI (Pydantic v2 validation)
-* **Model**: Google Gemini 2.5 Flash
-* **Text Extractors**: 
-  * PyMuPDF (for PDFs)
+* **NLP**: spaCy (NER: `en_core_web_sm`)
+* **Embeddings**: SentenceTransformers (`BAAI/bge-small-en-v1.5`, 384-dim)
+* **Text Extractors**:
+  * PyMuPDF (for PDFs, including TeX-generated PDFs)
   * python-docx (for Word documents)
 * **Server**: Uvicorn
-* **Database**: PostgreSQL (via Neon) with SQLAlchemy
+* **Database**: PostgreSQL (Neon) with SQLAlchemy + pgvector
+* **Configuration**: pydantic-settings
+* **Testing**: pytest + httpx
 
----
-
-## Folder Structure
+## Project Structure
 ```
 ai-service/
 ├── app/
 │   ├── main.py              # Application bootstrap & handlers
+│   ├── config.py            # Centralized settings (pydantic-settings)
 │   ├── database.py          # SQLAlchemy engine, session & table initialization
-│   ├── models.py            # ORM models for PostgreSQL (Neon)
+│   ├── models.py            # ORM models for PostgreSQL
 │   ├── routes/              # Route controllers
-│   │   └── parser.py        # /ai/parse-resume endpoint
-│   ├── services/            # Business logic / AI integration
-│   │   ├── pdf_extractor.py          # PyMuPDF & python-docx text extractor
-│   │   ├── resume_parser.py          # Core parsing with spaCy & regex
-│   │   ├── resume_storage.py         # Persists parsed resumes to PostgreSQL
-│   │   ├── spacy_parser.py           # spaCy NER & name extraction
-│   │   ├── medical_skill_extractor.py
-│   │   └── experience_calculator.py
-│   ├── schemas/             # Pydantic schemas for data integrity
-│   │   └── resume.py
-│   ├── prompts/             # System instructions & templates
-│   │   └── resume_prompt.py
+│   │   ├── parser.py        # /ai/parse-resume endpoint
+│   │   └── matching.py      # /ai/match-jobs endpoint
+│   ├── services/            # Business logic
+│   │   ├── pdf_extractor.py           # PyMuPDF & python-docx text extractor
+│   │   ├── resume_parser.py           # Core parsing with spaCy & regex
+│   │   ├── resume_storage.py          # Persists parsed resumes to PostgreSQL
+│   │   ├── spacy_parser.py            # spaCy NER & name extraction
+│   │   ├── medical_skill_extractor.py # Keyword-based medical skill detection
+│   │   ├── experience_calculator.py   # Date range parsing & experience calc
+│   │   ├── embedding_service.py       # SentenceTransformer wrapper
+│   │   ├── embedding_utils.py         # Shared embedding text builder
+│   │   └── matching_engine.py         # Multi-factor job matching
+│   ├── schemas/             # Pydantic schemas
+│   │   ├── resume.py
+│   │   └── matching.py
+│   ├── constants/
+│   │   └── medical_constants.py  # Medical skills, certs, lists
 │   ├── templates/
-│   │   └── index.html       # Testing frontend
+│   │   └── index.html       # Testing frontend (wizard UI)
 │   └── utils/
 │       └── logger.py        # Custom formatted console logger
-├── tests/                   # Unit tests
-├── uploads/                 # Temporary directory for uploaded resumes (UUID named)
-├── requirements.txt         # Package dependencies
-├── .env                     # Environment variables (incl. DATABASE_URL)
-└── postman_collection.json  # Importable Postman workspace
+├── tests/
+│   ├── test_matching_engine.py
+│   ├── test_resume_parser.py
+│   ├── test_embedding_utils.py
+│   └── test_api.py
+├── uploads/                 # Temporary uploaded files (auto-cleaned)
+├── requirements.txt
+├── .env                     # Environment variables
+└── postman_collection.json
 ```
-
----
 
 ## Setup & Running Locally
 
-### 1. Clone & Navigate
-```bash
-cd ai-service
-```
-
-### 2. Create Virtual Environment
+### 1. Create Virtual Environment
 ```bash
 # Windows
 python -m venv venv
@@ -67,139 +69,44 @@ python3 -m venv venv
 source venv/bin/activate
 ```
 
-### 3. Install Dependencies
+### 2. Install Dependencies
 ```bash
 pip install -r requirements.txt
+python -m spacy download en_core_web_sm
 ```
 
-### 4. Setup Environment Variables
-Copy `.env.example` to `.env` and configure the required variables:
-```bash
-copy .env.example .env
-```
-Open `.env` and edit:
+### 3. Configure Environment
+Create a `.env` file:
 ```env
 PORT=8000
 LOG_LEVEL=INFO
-GEMINI_API_KEY=AIzaSyYourActualAPIKeyHere
 DATABASE_URL=postgresql://user:password@host:port/dbname?sslmode=require
+MAX_UPLOAD_SIZE_MB=10
 ```
 
-> **Database**: Parsed resumes are stored in PostgreSQL (Neon). Use a pooled connection URL (with `-pooler` in the hostname) for runtime queries. Table creation is handled automatically on startup via a direct connection.
-
-### 5. Launch the Service
+### 4. Launch the Service
 ```bash
 python -m app.main
 ```
-The application will be live at `http://localhost:8000`. 
-* **Swagger Interactive Docs**: `http://localhost:8000/docs`
-* **Alternative ReDoc**: `http://localhost:8000/redoc`
 
----
+The application will be live at `http://localhost:8000`.
+* **Swagger Docs**: `http://localhost:8000/docs`
+* **ReDoc**: `http://localhost:8000/redoc`
 
-## API Documentation
+## API Endpoints
 
 ### 1. Health Check
-* **Endpoint**: `GET /health`
-* **Response**:
-```json
-{
-  "status": "healthy",
-  "gemini_api_configured": true,
-  "version": "1.0.0"
-}
-```
+`GET /health`
 
 ### 2. Parse Resume
-* **Endpoint**: `POST /ai/parse-resume`
-* **Content-Type**: `multipart/form-data`
-* **Request Params**:
-  * `file`: (Binary PDF/DOCX)
+`POST /ai/parse-resume` (multipart/form-data, accepts PDF/DOCX)
 
----
-
-## Sample Request & Response
-
-### Sample Request (cURL)
-```bash
-curl -X 'POST' \
-  'http://localhost:8000/ai/parse-resume' \
-  -H 'accept: application/json' \
-  -H 'Content-Type: multipart/form-data' \
-  -F 'file=@dr_sarah_resume.pdf;type=application/pdf'
-```
-
-### Sample Response
-```json
-{
-  "personal_info": {
-    "prefix": "Dr",
-    "first_name": "Sarah",
-    "last_name": "Jenkins",
-    "email": "sarah.jenkins@gmail.com",
-    "phone": "+1-555-0199",
-    "gender": "Female",
-    "date_of_birth": "1988-04-12",
-    "city": "Boston",
-    "state": "Massachusetts",
-    "country": "United States",
-    "professional_headline": "Consultant Cardiologist with 8+ years of clinical practice in interventional cardiology."
-  },
-  "education": [
-    {
-      "degree": "MBBS",
-      "specialization": "Medicine and Surgery",
-      "college": "Harvard Medical School",
-      "start_year": "2006",
-      "end_year": "2012"
-    },
-    {
-      "degree": "MD",
-      "specialization": "Cardiology",
-      "college": "Johns Hopkins University School of Medicine",
-      "start_year": "2012",
-      "end_year": "2015"
-    }
-  ],
-  "experience": {
-    "specialization": "Cardiologist",
-    "experience_years": 8.5,
-    "current_designation": "Senior Interventional Cardiologist",
-    "current_hospital": "Massachusetts General Hospital",
-    "medical_registration_number": "MC-987654-A"
-  },
-  "skills": [
-    "Angioplasty",
-    "Echocardiography",
-    "Patient Care",
-    "Electrocardiogram (ECG) Analysis",
-    "Clinical Research"
-  ],
-  "certifications": [
-    "Board Certified in Cardiovascular Disease",
-    "Advanced Cardiovascular Life Support (ACLS)"
-  ],
-  "languages": [
-    "English",
-    "Spanish"
-  ]
-}
-```
-
----
-
-## Error Handling
-
-The application maps specific error codes for seamless client error resolution:
-* **`400 Bad Request`**: File is corrupted, empty, or uses an unsupported file extension.
-* **`422 Unprocessable Entity`**: Request format/multipart parameters are wrong.
-* **`500 Internal Server Error`**: Gemini API failure, network down, or unhandled exceptions.
+### 3. Match Jobs
+`POST /ai/match-jobs` (JSON with `resume_id` and `top_k`)
 
 ## Database
 
-Parsed resume data is automatically persisted to a **PostgreSQL** database (Neon) using SQLAlchemy ORM. Storage runs as a background task so it does not affect response time.
-
-### Tables
+Tables are created automatically on first startup. Uses pgvector for semantic search.
 
 | Table | Description |
 |-------|-------------|
@@ -207,9 +114,12 @@ Parsed resume data is automatically persisted to a **PostgreSQL** database (Neon
 | `personal_info` | Doctor's name, contact, location |
 | `education` | Degrees, colleges, years |
 | `experience` | Specialization, years, current role |
-| `work_history` | Individual job entries (FK → experience) |
+| `work_history` | Individual job entries |
 | `resume_skills` | Extracted medical skills |
-| `resume_certifications` | Certifications found in resume |
+| `resume_certifications` | Certifications |
 | `resume_languages` | Languages spoken |
 
-> Database tables are created automatically on first startup. No manual migration steps needed.
+## Running Tests
+```bash
+pytest tests/ -v
+```

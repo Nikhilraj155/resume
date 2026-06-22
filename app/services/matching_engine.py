@@ -5,7 +5,6 @@ from uuid import UUID
 
 from sqlalchemy import select, update
 from sqlalchemy.orm import joinedload
-from pgvector.sqlalchemy import Vector
 
 from app.database import SessionLocal
 from app.models import (
@@ -14,6 +13,7 @@ from app.models import (
     JobDescriptionRef, JobSkillRef, JobCertificationRef,
 )
 from app.services.embedding_service import embedding_service
+from app.services.embedding_utils import build_embedding_text_from_resume
 from app.schemas.matching import (
     MatchJobsResponse, JobMatchResult, JobDetails,
     ScoreBreakdown, MatchReasons,
@@ -86,8 +86,6 @@ def _normalize_cert_name(name: str) -> str:
 
 
 def _role_alignment(resume_spec: str, resume_designation: str, resume_education: list, resume_skills: set, job_title: str) -> float:
-    """Check if the candidate's role type aligns with the job role type.
-    Returns 1.0 for good alignment, lower values for role-type mismatch."""
     if not job_title:
         return 1.0
     job_lower = job_title.lower()
@@ -141,13 +139,10 @@ def _location_match(resume_city: Optional[str], resume_state: Optional[str], jd_
     jd_lower = jd_location.lower()
     resume_city_lower = resume_city.lower().strip() if resume_city else ""
     resume_state_lower = resume_state.lower().strip() if resume_state else ""
-    # Exact city match (either direction)
     if resume_city_lower and (resume_city_lower in jd_lower or jd_lower in resume_city_lower):
         return 1.0
-    # State match in job location
     if resume_state_lower and resume_state_lower in jd_lower:
         return 0.75
-    # Job location is a substring of resume city (e.g. "Java" in "Bengaluru, Java" — edge)
     if resume_city_lower and resume_city_lower.startswith(jd_lower):
         return 0.5
     return 0.0
@@ -164,72 +159,6 @@ def _build_candidate_name(pi: Optional[PersonalInfo]) -> Optional[str]:
     if pi.last_name:
         parts.append(pi.last_name)
     return " ".join(parts) if parts else None
-
-
-def _build_resume_embedding_text(resume: ParsedResume) -> str:
-    sentences = []
-    pi = resume.personal_info
-    exp = resume.experience
-
-    header_parts = []
-    if pi and (pi.first_name or pi.last_name):
-        header_parts.append(" ".join(filter(None, [pi.prefix, pi.first_name, pi.last_name])))
-    if exp:
-        if exp.current_designation:
-            header_parts.append(exp.current_designation)
-        if exp.current_hospital:
-            header_parts.append(f"at {exp.current_hospital}")
-    if header_parts:
-        sentences.append(" ".join(header_parts) + ".")
-
-    if exp:
-        if exp.specialization:
-            sentences.append(f"Specialization in {exp.specialization}.")
-        if exp.experience_years is not None:
-            sentences.append(f"{exp.experience_years} years of experience.")
-        for wh in exp.work_history:
-            wh_parts = []
-            if wh.designation:
-                wh_parts.append(wh.designation)
-            if wh.employer:
-                wh_parts.append(f"at {wh.employer}")
-            if wh_parts:
-                sentences.append("Worked as " + " ".join(wh_parts) + ".")
-
-    if resume.education:
-        edu_strs = []
-        for edu in resume.education:
-            parts = [p for p in [edu.degree, edu.specialization, edu.college] if p]
-            if parts:
-                edu_strs.append(" ".join(parts))
-        if edu_strs:
-            sentences.append("Education: " + ", ".join(edu_strs) + ".")
-
-    if resume.skills:
-        skills_list = [s.skill for s in resume.skills if s.skill]
-        if skills_list:
-            sentences.append("Skills: " + ", ".join(skills_list) + ".")
-
-    if resume.certifications:
-        certs_list = [c.certification for c in resume.certifications if c.certification]
-        if certs_list:
-            sentences.append("Certifications: " + ", ".join(certs_list) + ".")
-
-    if resume.languages:
-        langs_list = [l.language for l in resume.languages if l.language]
-        if langs_list:
-            sentences.append("Languages: " + ", ".join(langs_list) + ".")
-
-    if pi:
-        loc_parts = []
-        if pi.city:
-            loc_parts.append(pi.city)
-        if pi.state:
-            loc_parts.append(pi.state)
-        if loc_parts:
-            sentences.append("Location: " + ", ".join(loc_parts) + ".")
-
-    return " ".join(sentences)
 
 
 def _generate_semantic_reason(score: float) -> str:
@@ -310,7 +239,7 @@ def _ensure_resume_embedding(resume: ParsedResume) -> Optional[List[float]]:
         if hasattr(vec, 'tolist'):
             return vec.tolist()
         return vec
-    text = _build_resume_embedding_text(resume)
+    text = build_embedding_text_from_resume(resume)
     vec = embedding_service.encode(text)
     if vec is not None:
         db = SessionLocal()
@@ -323,6 +252,9 @@ def _ensure_resume_embedding(resume: ParsedResume) -> Optional[List[float]]:
         finally:
             db.close()
     return vec
+
+
+MAX_FALLBACK_JOBS = 1000
 
 
 def match_jobs(resume_id: UUID, top_k: int = 10) -> Tuple[List[JobMatchResult], Optional[str], int]:
@@ -346,17 +278,15 @@ def match_jobs(resume_id: UUID, top_k: int = 10) -> Tuple[List[JobMatchResult], 
         exp = resume.experience
 
         resume_skills_set = set(s.skill.lower() for s in resume.skills if s.skill)
-        resume_certs_set = set(c.certification.lower() for c in resume.certifications if c.certification)
+        resume_certs_set = set(c.name.lower() for c in resume.certifications if c.name)
         resume_spec = exp.specialization if exp else None
         resume_designation = exp.current_designation if exp else None
         resume_exp_years = exp.experience_years if exp else None
         resume_city = pi.city if pi else None
         resume_state = pi.state if pi else None
 
-        # Ensure resume has an embedding for pgvector search
         resume_vec = _ensure_resume_embedding(resume)
 
-        # Determine which jobs to consider via pgvector similarity
         job_ids_with_sim = []
         if resume_vec is not None and embedding_service.is_available():
             try:
@@ -377,13 +307,15 @@ def match_jobs(resume_id: UUID, top_k: int = 10) -> Tuple[List[JobMatchResult], 
                 logger.warning(f"pgvector search failed, falling back: {e}")
 
         if not job_ids_with_sim:
-            all_jobs = db.query(JobDescriptionRef.id).all()
+            count = db.query(JobDescriptionRef.id).count()
+            limit = min(count, MAX_FALLBACK_JOBS)
+            all_jobs = db.query(JobDescriptionRef.id).limit(limit).all()
             job_ids_with_sim = [(j.id, 0.0) for j in all_jobs]
+            logger.info(f"Fallback: loaded {len(job_ids_with_sim)} of {count} jobs")
 
         job_ids = [j_id for j_id, _ in job_ids_with_sim]
         sim_map = dict(job_ids_with_sim)
 
-        # Load full job details with relationships
         jobs = db.query(JobDescriptionRef).options(
             joinedload(JobDescriptionRef.skills),
             joinedload(JobDescriptionRef.certifications),
@@ -400,50 +332,38 @@ def match_jobs(resume_id: UUID, top_k: int = 10) -> Tuple[List[JobMatchResult], 
 
             semantic_sim = sim_map.get(job_id, 0.0)
 
-            # Skill overlap (Jaccard between resume skills and job skills)
             jd_skills_set = set(s.skill.lower() for s in full_job.skills if s.skill)
             skill_score = _jaccard_similarity(jd_skills_set, resume_skills_set)
 
-            # Experience fit
             exp_score = _experience_fit(resume_exp_years, full_job.experience_min, full_job.experience_max)
 
-            # Certification match (Jaccard between resume certs and job certs)
-            # Normalize cert names to strip parenthetical descriptions (e.g. "BLS (Basic Life Support)" → "bls")
             jd_certs_set = set(_normalize_cert_name(c.name) for c in full_job.certifications if c.name)
             resume_certs_norm_set = set(_normalize_cert_name(c) for c in resume_certs_set)
             cert_score = _jaccard_similarity(jd_certs_set, resume_certs_norm_set)
 
-            # Specialization match
             spec_score = 0.0
             if resume_spec:
                 spec_lower = resume_spec.lower()
-                # Check against industry
                 if full_job.industry:
                     ind_lower = full_job.industry.lower()
                     if spec_lower in ind_lower or ind_lower in spec_lower:
                         spec_score = 1.0
-                # Check against job title
                 if spec_score < 1.0 and full_job.job_title:
                     title_lower = full_job.job_title.lower()
                     if spec_lower in title_lower or title_lower in spec_lower:
                         spec_score = 0.9
-                # Check against job skills
                 if spec_score < 0.9 and jd_skills_set:
                     if any(s in spec_lower for s in jd_skills_set) or any(spec_lower in s for s in jd_skills_set):
                         spec_score = 0.75
-                # Known specialization ↔ industry mappings
                 if spec_score < 0.75 and full_job.industry:
                     mapped_industries = _SPEC_INDUSTRY_MAP.get(spec_lower, [])
                     if full_job.industry.lower() in mapped_industries:
                         spec_score = 0.8
 
-            # Location match
             loc_score = _location_match(resume_city, resume_state, full_job.location)
 
-            # Role alignment (doctor vs nurse, etc.)
             role_score = _role_alignment(resume_spec, resume_designation, resume.education, resume_skills_set, full_job.job_title)
 
-            # Weighted overall score
             overall = (
                 _SEMANTIC_WEIGHT * semantic_sim
                 + _SKILL_WEIGHT * skill_score
@@ -454,7 +374,6 @@ def match_jobs(resume_id: UUID, top_k: int = 10) -> Tuple[List[JobMatchResult], 
                 + _ROLE_ALIGNMENT_WEIGHT * role_score
             )
 
-            # Salary range string
             salary_range = None
             if full_job.salary_min is not None or full_job.salary_max is not None:
                 currency = full_job.salary_currency or "USD"
@@ -465,11 +384,9 @@ def match_jobs(resume_id: UUID, top_k: int = 10) -> Tuple[List[JobMatchResult], 
                 elif full_job.salary_max is not None:
                     salary_range = f"Up to {currency} {full_job.salary_max:,.0f}"
 
-            # Count matched skills/certs for reasons
             matched_skills = len(jd_skills_set & resume_skills_set)
             matched_certs = len(jd_certs_set & resume_certs_norm_set)
 
-            # Role alignment reason
             if role_score < 0.5:
                 role_reason = f"Role type mismatch: candidate's medical qualifications do not align with '{full_job.job_title}' role"
             elif role_score < 1.0:
